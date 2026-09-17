@@ -32,6 +32,9 @@ public final class HerdrEventSubscription: @unchecked Sendable {
     private let requestID = "northpane-\(UUID().uuidString)"
     private let lock = NSLock()
     private var handle: FileHandle?
+    #if os(Windows)
+    private var windowsReader: WindowsPipeReader?
+    #endif
     private var buffered = Data()
     private var acknowledged = false
     private var stopped = false
@@ -109,19 +112,13 @@ public final class HerdrEventSubscription: @unchecked Sendable {
             throw HerdrRuntimeError.sessionNotRunning
         }
         #if os(Windows)
-        // Foundation on Windows never calls a readabilityHandler, so a thread of its own blocks on
-        // reads. It starts only after the request: a pipe opened for synchronous I/O runs one
+        // The request goes before the reader starts: a pipe opened for synchronous I/O runs one
         // operation at a time, and a read already waiting would hold the write back until Herdr
         // gives up on the request.
-        Thread.detachNewThread { [weak self] in
-            while true {
-                let data = file.availableData
-                guard let self else { return }
-                guard !data.isEmpty else { self.finish(nil); return }
-                self.consume(data)
-                if self.lock.withLock({ self.stopped }) { return }
-            }
-        }
+        let reader = WindowsPipeReader(file)
+        lock.withLock { windowsReader = reader }
+        reader.start(onData: { [weak self] data in self?.consume(data) },
+                     onEnd: { [weak self] in self?.finish(nil) })
         #endif
 
         try await withCheckedThrowingContinuation { continuation in
@@ -199,7 +196,14 @@ public final class HerdrEventSubscription: @unchecked Sendable {
             handle = nil; acknowledgement = nil; onEvent = nil; onClose = nil
             return state
         }
+        #if os(Windows)
+        // Interrupt the blocked read first, and close off this thread: closing a pipe handle while
+        // a synchronous read is still waiting on it would block the caller.
+        lock.withLock { windowsReader }?.cancel()
+        if let file = state.0 { DispatchQueue.global().async { try? file.close() } }
+        #else
         try? state.0?.close()
+        #endif
         if let waiter = state.1 { waiter.resume(throwing: error ?? HerdrRuntimeError.sessionNotRunning) }
         if notify { state.2?(error) }
     }

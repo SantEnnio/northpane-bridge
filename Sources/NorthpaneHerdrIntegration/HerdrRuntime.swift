@@ -421,6 +421,9 @@ public final class HerdrTerminalSession: @unchecked Sendable {
     private var process: Process?
     private var input: FileHandle?
     private var pending = Data()
+    #if os(Windows)
+    private var windowsReader: WindowsPipeReader?
+    #endif
 
     public init(executableURL: URL, paneID: String, sessionName: String? = nil, mode: Mode) {
         self.executableURL = executableURL; self.paneID = paneID; self.sessionName = sessionName; self.mode = mode
@@ -445,17 +448,9 @@ public final class HerdrTerminalSession: @unchecked Sendable {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
         #if os(Windows)
-        // Foundation on Windows never calls a pipe's readabilityHandler (found on a real Windows
-        // Host: Herdr streamed the terminal and nothing reached the Client). A thread of its own
-        // blocks on reads instead, until the stream ends.
-        let output = outputPipe.fileHandleForReading
-        Thread.detachNewThread { [weak self] in
-            while true {
-                let data = output.availableData
-                guard !data.isEmpty, let self else { return }
-                self.consume(data, onOutput: onOutput)
-            }
-        }
+        let reader = WindowsPipeReader(outputPipe.fileHandleForReading)
+        windowsReader = reader
+        reader.start(onData: { [weak self] data in self?.consume(data, onOutput: onOutput) }, onEnd: {})
         #else
         outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -499,7 +494,14 @@ public final class HerdrTerminalSession: @unchecked Sendable {
         let process = self.process
         self.process = nil
         input = nil
+        #if os(Windows)
+        let reader = windowsReader
+        windowsReader = nil
+        #endif
         lock.unlock()
+        #if os(Windows)
+        reader?.cancel()
+        #endif
         if process?.isRunning == true { process?.terminate() }
     }
 
