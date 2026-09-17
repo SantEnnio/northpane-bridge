@@ -108,9 +108,10 @@ public final class HerdrEventSubscription: @unchecked Sendable {
             throw HerdrRuntimeError.sessionNotRunning
         }
         #if os(Windows)
-        // A pipe opened for synchronous I/O runs one operation at a time: a read already waiting on
-        // it would hold this write back until Herdr gives up on the request. So the request goes
-        // first, and only then does a thread of its own start blocking on reads.
+        // Foundation on Windows never calls a readabilityHandler, so a thread of its own blocks on
+        // reads. It starts only after the request: a pipe opened for synchronous I/O runs one
+        // operation at a time, and a read already waiting would hold the write back until Herdr
+        // gives up on the request.
         Thread.detachNewThread { [weak self] in
             while true {
                 let data = file.availableData

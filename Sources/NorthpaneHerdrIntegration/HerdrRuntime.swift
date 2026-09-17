@@ -432,11 +432,25 @@ public final class HerdrTerminalSession: @unchecked Sendable {
         process.standardInput = inputPipe
         process.standardOutput = outputPipe
         process.standardError = errorPipe
+        #if os(Windows)
+        // Foundation on Windows never calls a pipe's readabilityHandler (found on a real Windows
+        // Host: Herdr streamed the terminal and nothing reached the Client). A thread of its own
+        // blocks on reads instead, until the stream ends.
+        let output = outputPipe.fileHandleForReading
+        Thread.detachNewThread { [weak self] in
+            while true {
+                let data = output.availableData
+                guard !data.isEmpty, let self else { return }
+                self.consume(data, onOutput: onOutput)
+            }
+        }
+        #else
         outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
             self?.consume(data, onOutput: onOutput)
         }
+        #endif
         process.terminationHandler = { process in
             let error: Error? = process.terminationStatus == 0 ? nil : HerdrRuntimeError.commandFailed(String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "terminal session failed")
             onClose(error)
