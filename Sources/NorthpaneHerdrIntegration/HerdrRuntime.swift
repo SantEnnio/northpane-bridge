@@ -91,10 +91,22 @@ public struct HerdrProcessRunner: HerdrCommandRunning {
                 process.standardOutput = output
                 process.standardError = errors
                 do {
+                    HerdrTrace.log("herdr run \(arguments.first(where: { !$0.hasPrefix("-") }) ?? "") \(arguments.dropFirst().prefix(2).joined(separator: " "))")
                     try process.run()
-                    process.waitUntilExit()
+                    // Both pipes are drained before waiting: a child whose output outgrows the pipe
+                    // buffer (a few KB on Windows) blocks until someone reads, so waiting first would
+                    // deadlock on a large snapshot.
+                    let errorReader = DispatchGroup()
+                    nonisolated(unsafe) var errorData = Data()
+                    errorReader.enter()
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        errorData = errors.fileHandleForReading.readDataToEndOfFile()
+                        errorReader.leave()
+                    }
                     let data = output.fileHandleForReading.readDataToEndOfFile()
-                    let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+                    errorReader.wait()
+                    process.waitUntilExit()
+                    HerdrTrace.log("herdr exit \(process.terminationStatus), \(data.count) bytes")
                     guard process.terminationStatus == 0 else {
                         let detail = String(data: errorData.isEmpty ? data : errorData, encoding: .utf8) ?? "herdr command failed"
                         continuation.resume(throwing: HerdrRuntimeError.commandFailed(detail.trimmingCharacters(in: .whitespacesAndNewlines)))
@@ -452,9 +464,11 @@ public final class HerdrTerminalSession: @unchecked Sendable {
         }
         #endif
         process.terminationHandler = { process in
+            HerdrTrace.log("terminal session ended with \(process.terminationStatus)")
             let error: Error? = process.terminationStatus == 0 ? nil : HerdrRuntimeError.commandFailed(String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "terminal session failed")
             onClose(error)
         }
+        HerdrTrace.log("terminal session \(mode) \(paneID) starting")
         do { try process.run() }
         catch { throw HerdrRuntimeError.commandFailed(error.localizedDescription) }
         self.process = process

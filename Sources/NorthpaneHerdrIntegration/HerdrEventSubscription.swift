@@ -81,6 +81,7 @@ public final class HerdrEventSubscription: @unchecked Sendable {
         onEvent: @escaping @Sendable () -> Void,
         onClose: @escaping @Sendable (Error?) -> Void
     ) async throws {
+        HerdrTrace.log("event subscription connecting to \(socketPath)")
         let file = try Self.connect(path: socketPath)
         lock.withLock {
             self.handle = file
@@ -161,6 +162,7 @@ public final class HerdrEventSubscription: @unchecked Sendable {
     }
 
     private func consumeLine(_ line: Data) {
+        HerdrTrace.log("event subscription line of \(line.count) bytes, acknowledged \(lock.withLock { acknowledged })")
         guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
             finish(HerdrRuntimeError.malformedResponse)
             return
@@ -188,6 +190,7 @@ public final class HerdrEventSubscription: @unchecked Sendable {
     }
 
     private func finish(_ error: Error?, notify: Bool = true) {
+        HerdrTrace.log("event subscription finishing (error: \(error.map { String(describing: $0) } ?? "none"), notify: \(notify))")
         let state = lock.withLock { () -> (FileHandle?, CheckedContinuation<Void, Error>?, (@Sendable (Error?) -> Void)?) in
             guard !stopped else { return (nil, nil, nil) }
             stopped = true
