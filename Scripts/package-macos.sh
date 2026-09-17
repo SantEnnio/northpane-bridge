@@ -9,6 +9,7 @@ set -eu
 repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 output_directory=${1:-"$repository_root/.release-artifacts"}
 
+set -x
 swift build --package-path "$repository_root" -c release --arch arm64 --arch x86_64 --product northpane-bridge
 # A multi-architecture build goes through the Xcode build system, which writes here; --show-bin-path
 # does not answer for it.
@@ -19,8 +20,9 @@ packaged="$output_directory/northpane-bridge-macos-universal"
 strip -x -o "$packaged" "$binary"
 codesign --force --sign - "$packaged"
 chmod 755 "$packaged"
-lipo -verify_arch arm64 x86_64 "$packaged"
-env -i "$packaged" self-check --json > /dev/null
+lipo -info "$packaged"
+lipo "$packaged" -verify_arch arm64 x86_64
+env -i "$packaged" self-check --json
 gzip -9 -n -f "$packaged"
 (cd "$output_directory" && shasum -a 256 "northpane-bridge-macos-universal.gz" > "northpane-bridge-macos-universal.gz.sha256")
 echo "$packaged.gz"
