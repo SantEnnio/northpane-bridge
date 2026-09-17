@@ -10,11 +10,17 @@ repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 output_directory=${1:-"$repository_root/.release-artifacts"}
 
 set -x
-swift build --package-path "$repository_root" -c release --arch arm64 --arch x86_64 --product northpane-bridge
-# A multi-architecture build goes through the Xcode build system, which writes here; --show-bin-path
-# does not answer for it.
-binary="$repository_root/.build/apple/Products/Release/northpane-bridge"
-test -x "$binary" || { echo "no universal binary at $binary" >&2; exit 1; }
+# One build per architecture, joined with lipo: a single multi-architecture build goes through the
+# Xcode build system, which rejects one of the package's dependencies.
+for arch in arm64 x86_64; do
+  swift build --package-path "$repository_root" --scratch-path "$repository_root/.build/$arch" -c release --arch "$arch" --product northpane-bridge
+done
+binary="$repository_root/.build/universal/northpane-bridge"
+mkdir -p "$(dirname "$binary")"
+lipo -create \
+  "$(swift build --package-path "$repository_root" --scratch-path "$repository_root/.build/arm64" -c release --arch arm64 --show-bin-path)/northpane-bridge" \
+  "$(swift build --package-path "$repository_root" --scratch-path "$repository_root/.build/x86_64" -c release --arch x86_64 --show-bin-path)/northpane-bridge" \
+  -output "$binary"
 mkdir -p "$output_directory"
 packaged="$output_directory/northpane-bridge-macos-universal"
 strip -x -o "$packaged" "$binary"
