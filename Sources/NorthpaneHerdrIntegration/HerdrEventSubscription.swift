@@ -87,18 +87,7 @@ public final class HerdrEventSubscription: @unchecked Sendable {
             self.onEvent = onEvent
             self.onClose = onClose
         }
-        #if os(Windows)
-        // A named pipe has no readability source here: a dedicated thread blocks on reads instead.
-        Thread.detachNewThread { [weak self] in
-            while true {
-                let data = file.availableData
-                guard let self else { return }
-                guard !data.isEmpty else { self.finish(nil); return }
-                self.consume(data)
-                if self.lock.withLock({ self.stopped }) { return }
-            }
-        }
-        #else
+        #if !os(Windows)
         file.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { self?.finish(nil); return }
@@ -118,6 +107,20 @@ public final class HerdrEventSubscription: @unchecked Sendable {
             finish(HerdrRuntimeError.sessionNotRunning)
             throw HerdrRuntimeError.sessionNotRunning
         }
+        #if os(Windows)
+        // A pipe opened for synchronous I/O runs one operation at a time: a read already waiting on
+        // it would hold this write back until Herdr gives up on the request. So the request goes
+        // first, and only then does a thread of its own start blocking on reads.
+        Thread.detachNewThread { [weak self] in
+            while true {
+                let data = file.availableData
+                guard let self else { return }
+                guard !data.isEmpty else { self.finish(nil); return }
+                self.consume(data)
+                if self.lock.withLock({ self.stopped }) { return }
+            }
+        }
+        #endif
 
         try await withCheckedThrowingContinuation { continuation in
             let immediate = lock.withLock { () -> Result<Void, Error>? in
