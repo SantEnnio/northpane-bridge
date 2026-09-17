@@ -1,4 +1,5 @@
 import Foundation
+import NorthpaneProtocol
 
 public enum SSHKeyBootstrapError: Error, Equatable, Sendable {
     case invalidEndpoint
@@ -32,7 +33,17 @@ public enum RemoteBridgeLaunch {
     /// Directories a non-interactive SSH shell omits but where the Bridge and Herdr actually live.
     public static let searchPath = "$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
 
-    public static func command(_ bridgeCommand: String = "northpane-bridge") -> String {
-        "sh -c 'export PATH=\"\(searchPath):$PATH\"; if command -v \(bridgeCommand) >/dev/null 2>&1; then exec \(bridgeCommand) serve --stdio; else exec \"$HOME/.local/bin/\(bridgeCommand)\" serve --stdio; fi'"
+    /// Where install.ps1 keeps the active Bridge on a Windows Host.
+    public static let windowsBridgePath = #"%LOCALAPPDATA%\Northpane\Bridge\current\northpane-bridge.exe"#
+
+    public static func command(_ bridgeCommand: String = "northpane-bridge", shell: HostShell = .posix) -> String {
+        switch shell {
+        case .posix:
+            return "sh -c 'export PATH=\"\(searchPath):$PATH\"; if command -v \(bridgeCommand) >/dev/null 2>&1; then exec \(bridgeCommand) serve --stdio; else exec \"$HOME/.local/bin/\(bridgeCommand)\" serve --stdio; fi'"
+        case .windows:
+            // An SSH session on Windows lands in cmd.exe, which knows neither `sh` nor the POSIX
+            // command above. The installed Bridge comes first; a Bridge on PATH is the fallback.
+            return #"if exist "\#(windowsBridgePath)" ("\#(windowsBridgePath)" serve --stdio) else (\#(bridgeCommand).exe serve --stdio)"#
+        }
     }
 }

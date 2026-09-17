@@ -111,3 +111,27 @@ func sshThatNeverReachedTheHostReportsTheRouteProblemRatherThanAnExitCode(_ scen
     #expect(body.first != Character("{").asciiValue)
     #expect(try EnvelopeCodec.decodeBody(body) == expected)
 }
+
+/// An SSH session on a Windows Host lands in cmd.exe, which knows neither `sh` nor the POSIX
+/// command; it answers with its own "not recognized", and that asks for the Windows command
+/// rather than for installing a Bridge that may already be there.
+@Test func aWindowsHostGetsACommandItsOwnShellCanRun() {
+    let posix = RemoteBridgeLaunch.command()
+    #expect(posix.hasPrefix("sh -c"))
+    let windows = RemoteBridgeLaunch.command(shell: .windows)
+    #expect(!windows.contains("sh -c"))
+    #expect(windows.contains(#"%LOCALAPPDATA%\Northpane\Bridge\current\northpane-bridge.exe"#))
+    #expect(windows.contains("serve --stdio"))
+    #expect(ProcessBridgeTransport.sshArguments(endpoint: "op@host", shell: .windows).last == windows)
+    #expect(ProcessBridgeTransport.sshArguments(endpoint: "op@host").last == posix)
+}
+
+@Test(arguments: [
+    ("'sh' is not recognized as an internal or external command,\noperable program or batch file.", Int32(1)),
+    ("'sh' non \u{00e8} riconosciuto come comando interno o esterno,", Int32(1)),
+    ("", Int32(9009)),
+])
+func cmdExeRefusingThePOSIXCommandAsksForTheWindowsOne(_ scenario: (String, Int32)) {
+    let failure = ProcessBridgeTransport.classifyFailure(kind: .ssh, exitCode: scenario.1, errorData: Data(scenario.0.utf8))
+    #expect(failure == .remoteShellMismatch(.windows))
+}

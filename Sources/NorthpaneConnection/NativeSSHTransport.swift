@@ -25,7 +25,7 @@ public actor NativeSSHBridgeTransport: BridgeTransport {
         username: String,
         credential: NativeSSHCredential,
         expectedHostKeyFingerprint: String? = nil,
-        bridgeCommand: String = RemoteBridgeLaunch.command()
+        bridgeCommand: String = RemoteBridgeLaunch.command()  // the caller passes the Host's own shell command
     ) async throws -> NativeSSHBridgeTransport {
         guard !host.isEmpty, !username.isEmpty, (1...65_535).contains(port), !bridgeCommand.contains("\n") else {
             throw SystemTransportError.invalidEndpoint

@@ -33,6 +33,9 @@ public enum SystemTransportError: Error, Equatable, Sendable {
     case sshHostVerificationFailed
     case sshUnreachable(SSHReachabilityFailure)
     case remoteBridgeUnavailable
+    /// The Host's SSH session answers in a different shell from the one the command was written
+    /// for: a Windows Host lands in `cmd.exe`, which cannot run the POSIX launch command.
+    case remoteShellMismatch(HostShell)
     case processFailed(exitCode: Int32)
 }
 
@@ -147,22 +150,22 @@ public actor ProcessBridgeTransport: BridgeTransport {
 
     /// Key-only, non-interactive connection through the system `ssh`. The user's own
     /// configuration, keys and agent apply; `identityFile` adds the device key on top.
-    public static func ssh(profile: ConnectionProfile, bridgeCommand: String = "northpane-bridge", identityFile: URL? = nil) throws -> ProcessBridgeTransport {
+    public static func ssh(profile: ConnectionProfile, bridgeCommand: String = "northpane-bridge", identityFile: URL? = nil, shell: HostShell? = nil) throws -> ProcessBridgeTransport {
         guard let endpoint = profile.endpoint, !endpoint.isEmpty else { throw SystemTransportError.missingEndpoint }
         return try ProcessBridgeTransport(
             kind: .ssh,
             executableURL: URL(fileURLWithPath: "/usr/bin/ssh"),
-            arguments: sshArguments(endpoint: endpoint, bridgeCommand: bridgeCommand, identityFile: identityFile)
+            arguments: sshArguments(endpoint: endpoint, bridgeCommand: bridgeCommand, identityFile: identityFile, shell: shell ?? profile.hostShell ?? .posix)
         )
     }
 
-    public static func sshArguments(endpoint: String, bridgeCommand: String = "northpane-bridge", identityFile: URL? = nil) -> [String] {
+    public static func sshArguments(endpoint: String, bridgeCommand: String = "northpane-bridge", identityFile: URL? = nil, shell: HostShell = .posix) -> [String] {
         var arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
         // With the device key, use only that identity: otherwise `ssh` offers every key and agent
         // identity first and can exhaust the Host's MaxAuthTries before reaching it, especially
         // across the several connections an install makes in a row.
         if let identityFile { arguments += ["-o", "IdentitiesOnly=yes", "-i", identityFile.path] }
-        return arguments + [endpoint, remoteBridgeCommand(bridgeCommand)]
+        return arguments + [endpoint, remoteBridgeCommand(bridgeCommand, shell: shell)]
     }
 
     /// Directories a non-interactive SSH shell omits but where the Bridge and Herdr actually
@@ -171,8 +174,8 @@ public actor ProcessBridgeTransport: BridgeTransport {
     static let remoteSearchPath = RemoteBridgeLaunch.searchPath
 
     /// The remote command; see `RemoteBridgeLaunch`.
-    public static func remoteBridgeCommand(_ bridgeCommand: String = "northpane-bridge") -> String {
-        RemoteBridgeLaunch.command(bridgeCommand)
+    public static func remoteBridgeCommand(_ bridgeCommand: String = "northpane-bridge", shell: HostShell = .posix) -> String {
+        RemoteBridgeLaunch.command(bridgeCommand, shell: shell)
     }
 
     static func classifyFailure(kind: TransportKind, exitCode: Int32, errorData: Data) -> SystemTransportError {
@@ -194,6 +197,13 @@ public actor ProcessBridgeTransport: BridgeTransport {
         // covers `exec` of a missing path (the ~/.local/bin fallback). Both mean the Host has
         // no usable Bridge, and the remedy is the same: install it. Generic messages are only
         // trusted when they name the Bridge, so an unrelated failure keeps its real reason.
+        // cmd.exe on a Windows Host cannot run the POSIX launch command and says so in the
+        // system's own language; 9009 is its "command not found". The Bridge may be installed
+        // there perfectly well, so this asks for the Windows command, not for an install.
+        if exitCode == 9009 || detail.contains("is not recognized as an internal or external command")
+            || detail.contains("non e' riconosciuto come comando") || detail.contains("non è riconosciuto come comando") {
+            return .remoteShellMismatch(.windows)
+        }
         if exitCode == 126 || exitCode == 127
             || detail.contains("command not found") || detail.contains("northpane-bridge: not found") {
             return .remoteBridgeUnavailable
