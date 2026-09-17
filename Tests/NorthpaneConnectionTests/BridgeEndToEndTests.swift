@@ -12,6 +12,10 @@ import Testing
 /// A stopped Herdr fails at the event socket before the Bridge ever reaches the snapshot. The
 /// authenticated Bridge session must stay usable so the recovery button can start Herdr over that
 /// same SSH-carried protocol instead of opening an unrestricted remote shell.
+
+// The end-to-end runs drive the real Bridge against Tests/Fixtures/fake-herdr.sh, a shell script:
+// POSIX Hosts only. A Windows Bridge is exercised by the live Herdr conformance run instead.
+#if !os(Windows)
 @Test func anAuthenticatedBridgeCanStartHerdrAfterEarlyDiscoveryFailure() async throws {
     let (client, signer) = try await makeRealBridgeClient(
         fixtureEnvironment: ["NORTHPANE_HERDR_EVENT_SOCKET_OPTIONAL=0"]
@@ -587,4 +591,5 @@ private final class TestCertificateDelegate: NSObject, URLSessionDelegate, @unch
     #expect(!accepted.hostSigningPublicKey.isEmpty)
     await client.close()
 }
+#endif
 #endif

@@ -44,14 +44,17 @@ public enum WorkspaceFileReader {
     ) throws -> File {
         var trimmed = printed.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.lowercased().hasPrefix("file://") { trimmed = String(trimmed.dropFirst(7)).removingPercentEncoding ?? "" }
-        guard !trimmed.isEmpty, !trimmed.contains("\0"), !trimmed.contains("\\"), !trimmed.contains("://") else { throw WorkspaceFileError.invalidPath }
+        // On a POSIX Host a backslash is a legal file-name character and never a separator, so a
+        // path carrying one is refused rather than guessed at; on Windows it is the separator.
+        guard !trimmed.isEmpty, !trimmed.contains("\0"), HostPath.isWindows || !trimmed.contains("\\"), !trimmed.contains("://") else { throw WorkspaceFileError.invalidPath }
+        trimmed = HostPath.normalized(trimmed)
         let workspace = workspaceURL(workspaceRoot)
         let candidate: URL
-        if trimmed.hasPrefix("/") {
+        if HostPath.isAbsolute(trimmed) {
             candidate = URL(fileURLWithPath: trimmed)
         } else if trimmed == "~" || trimmed.hasPrefix("~/") {
             candidate = homeDirectory.appending(path: String(trimmed.dropFirst(trimmed == "~" ? 1 : 2)))
-        } else if let cwd, cwd.hasPrefix("/") {
+        } else if let cwd = cwd.map(HostPath.normalized), HostPath.isAbsolute(cwd) {
             candidate = URL(fileURLWithPath: cwd, isDirectory: true).appending(path: trimmed)
         } else if let workspace {
             candidate = workspace.appending(path: trimmed)
@@ -119,7 +122,7 @@ public enum WorkspaceFileReader {
     struct Root: Equatable, Sendable { let url: URL; let label: String }
 
     static func workspaceURL(_ workspaceRoot: String?) -> URL? {
-        workspaceRoot.flatMap { $0.hasPrefix("/") ? URL(fileURLWithPath: $0, isDirectory: true) : nil }
+        workspaceRoot.map(HostPath.normalized).flatMap { HostPath.isAbsolute($0) ? URL(fileURLWithPath: $0, isDirectory: true) : nil }
     }
 
     /// The roots, most specific first: a path inside the workspace is reported as the
@@ -173,9 +176,9 @@ public enum WorkspaceFileReader {
 /// Workspace root `~`, and its icon unfindable). The file system root is never accepted.
 public enum WorkspaceRootResolver {
     public static func root(worktreePath: String?, paneDirectories: [String], homeDirectory: String = NSHomeDirectory()) -> String? {
-        if let worktreePath, worktreePath.hasPrefix("/") { return worktreePath }
+        if let worktreePath, HostPath.isAbsolute(HostPath.normalized(worktreePath)) { return worktreePath }
         let home = URL(fileURLWithPath: homeDirectory, isDirectory: true).standardizedFileURL.pathComponents
-        var absolute = paneDirectories.filter { $0.hasPrefix("/") }.map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL.pathComponents }
+        var absolute = paneDirectories.map(HostPath.normalized).filter(HostPath.isAbsolute).map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL.pathComponents }
         let somewhereReal = absolute.filter { $0 != home && $0.count > 1 }
         if !somewhereReal.isEmpty { absolute = somewhereReal }
         guard var common = absolute.first else { return nil }
@@ -185,5 +188,30 @@ public enum WorkspaceRootResolver {
         }
         guard common.count > 1 else { return nil }
         return NSString.path(withComponents: common)
+    }
+}
+
+/// How the Host writes file-system paths. POSIX paths are absolute from `/`; Windows paths may use
+/// either slash, start with a drive (`C:\` or `C:/`), a UNC share (`\\server\share`) or, as
+/// Foundation itself writes them, `/C:/`; they are handled with forward slashes.
+public enum HostPath {
+    #if os(Windows)
+    public static let isWindows = true
+    #else
+    public static let isWindows = false
+    #endif
+
+    public static func normalized(_ path: String) -> String { normalized(path, windows: isWindows) }
+    public static func isAbsolute(_ path: String) -> Bool { isAbsolute(path, windows: isWindows) }
+
+    static func normalized(_ path: String, windows: Bool) -> String {
+        windows ? path.replacingOccurrences(of: "\\", with: "/") : path
+    }
+
+    static func isAbsolute(_ path: String, windows: Bool) -> Bool {
+        guard windows else { return path.hasPrefix("/") }
+        let characters = Array(path)
+        if characters.count >= 3, characters[0].isASCII, characters[0].isLetter, characters[1] == ":", characters[2] == "/" { return true }
+        return path.hasPrefix("/")
     }
 }

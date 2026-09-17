@@ -82,3 +82,18 @@ private func makeWorktree() throws -> URL {
     // A shell somewhere else under home still counts, because it may well be the project.
     #expect(WorkspaceRootResolver.root(worktreePath: nil, paneDirectories: ["/Users/me/Dev/app", "/Users/me/Downloads"], homeDirectory: "/Users/me") == "/Users/me")
 }
+
+/// A Windows Host prints `C:\Users\op\app\notes.md`: the backslash is its separator there, while
+/// on a POSIX Host it stays an ordinary character and a path with one is refused.
+@Test func hostPathsFollowTheHostsOwnConventions() {
+    #expect(HostPath.normalized(#"C:\Users\op\notes.md"#, windows: true) == "C:/Users/op/notes.md")
+    #expect(HostPath.normalized(#"a\b"#, windows: false) == #"a\b"#)
+    #expect(HostPath.isAbsolute("C:/Users/op", windows: true))
+    #expect(HostPath.isAbsolute("d:/", windows: true))
+    #expect(HostPath.isAbsolute("//server/share/x", windows: true))
+    #expect(HostPath.isAbsolute("/C:/Users/op", windows: true))
+    #expect(!HostPath.isAbsolute("C:relative", windows: true))
+    #expect(!HostPath.isAbsolute("docs/notes.md", windows: true))
+    #expect(!HostPath.isAbsolute("C:/Users/op", windows: false))
+    #expect(HostPath.isAbsolute("/home/op", windows: false))
+}

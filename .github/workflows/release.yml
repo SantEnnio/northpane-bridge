@@ -102,4 +102,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
-        run: gh release create "$GITHUB_REF_NAME" assets/* --title "Northpane Bridge $VERSION" --notes "Install: see README. Digests in SHA256SUMS; release.json is what the Northpane apps pin." --prerelease --verify-tag
+        run: |
+          gh release create "$GITHUB_REF_NAME" assets/* --title "Northpane Bridge $VERSION" --prerelease --verify-tag \
+            --notes "Install with install.sh or install.ps1 (see README). Digests are in SHA256SUMS; release.json is what the Northpane apps pin."
