@@ -38,7 +38,7 @@ version for rollback and links `~/.local/bin/northpane-bridge`.
 | --- | --- |
 | Linux x86_64 and arm64 | fully static (musl): no Swift runtime or particular glibc needed |
 | Windows x86_64 | executable with the Swift and Visual C++ runtime DLLs beside it |
-| macOS | installed by the Mac app from its own signed copy |
+| macOS (universal) | ad-hoc signed; the Mac app sends its own Developer ID signed copy instead |
 
 Herdr must be installed on the Host. The Bridge finds it in `~/.local/bin` (Herdr's
 installer), Homebrew, `/usr/local/bin`, `/usr/bin` or `PATH`, or wherever

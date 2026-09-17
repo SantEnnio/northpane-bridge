@@ -63,8 +63,21 @@ jobs:
           name: windows
           path: artifacts/*.zip
 
+  macos:
+    needs: version
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: Scripts/package-macos.sh artifacts
+      - name: The binary reports the tagged version
+        run: gzip -dc artifacts/northpane-bridge-macos-universal.gz > "$RUNNER_TEMP/bridge" && chmod +x "$RUNNER_TEMP/bridge" && "$RUNNER_TEMP/bridge" --version | grep -F "northpane-bridge ${{ needs.version.outputs.version }} "
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: artifacts/*.gz
+
   publish:
-    needs: [version, linux, windows]
+    needs: [version, linux, windows, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

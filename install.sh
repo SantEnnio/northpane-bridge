@@ -39,8 +39,7 @@ fail() { code=$1; shift; echo "northpane-install: $*" >&2; exit "$code"; }
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64|Linux-amd64) platform=linux-x86_64 ;;
   Linux-aarch64|Linux-arm64) platform=linux-arm64 ;;
-  Darwin-arm64) platform=macos-arm64 ;;
-  Darwin-x86_64) platform=macos-x86_64 ;;
+  Darwin-arm64|Darwin-x86_64) platform=macos-universal ;;
   *) fail 24 "unsupported platform $(uname -s) $(uname -m)" ;;
 esac
 say "platform=$platform"

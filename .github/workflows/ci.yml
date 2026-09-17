@@ -22,6 +22,31 @@ jobs:
         run: swift test
       - name: Bridge self-check
         run: swift run northpane-bridge self-check --json
+      - name: Universal macOS package
+        run: Scripts/package-macos.sh artifacts
+      - name: install.sh installs the package for the current user
+        run: |
+          home="$RUNNER_TEMP/home"; mkdir -p "$home"
+          digest=$(cut -d ' ' -f 1 artifacts/northpane-bridge-macos-universal.gz.sha256)
+          cp artifacts/northpane-bridge-macos-universal.gz "$RUNNER_TEMP/wrong.gz"
+          set +e
+          env -i HOME="$home" PATH=/usr/bin:/bin sh install.sh --version 0.0.1 --sha256 "$(printf '0%.0s' $(seq 64))" --file "$RUNNER_TEMP/wrong.gz"
+          status=$?
+          set -e
+          test "$status" -eq 22
+          for version in 0.0.1 0.0.2 0.0.3; do
+            cp artifacts/northpane-bridge-macos-universal.gz "$RUNNER_TEMP/in.gz"
+            env -i HOME="$home" PATH=/usr/bin:/bin sh install.sh --version "$version" --sha256 "$digest" --file "$RUNNER_TEMP/in.gz"
+          done
+          root="$home/.local/share/northpane/bridge"
+          test "$(cd "$root/versions" && echo *)" = "0.0.2 0.0.3"
+          test "$(readlink "$root/current")" = "versions/0.0.3"
+          test "$(readlink "$root/previous")" = "versions/0.0.2"
+          env -i "$home/.local/bin/northpane-bridge" self-check --json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: northpane-bridge-macos
+          path: artifacts/
 
   linux:
     runs-on: ubuntu-24.04
