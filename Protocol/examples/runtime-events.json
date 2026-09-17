@@ -1,0 +1,8 @@
+{
+  "incarnation_id": "session-incarnation-42",
+  "snapshot_id": "snapshot-7",
+  "first_sequence": 19,
+  "events": [
+    {"type":"PANE_RENAMED","pane_id":"pane-1","title":"Agent waiting"}
+  ]
+}

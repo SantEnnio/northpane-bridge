@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  STATIC_SDK_URL: https://download.swift.org/swift-6.3.2-release/static-sdk/swift-6.3.2-RELEASE/swift-6.3.2-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
+  STATIC_SDK_CHECKSUM: 3fd798bef6f4408f1ea5a6f94ce4d4052830c4326ab85ebc04f983f01b3da407
+
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install protoc
+        run: brew install protobuf
+      - name: Generated protocol source matches the schema
+        run: Scripts/check-protobuf.sh
+      - name: Test
+        run: swift test
+      - name: Bridge self-check
+        run: swift run northpane-bridge self-check --json
+
+  linux:
+    runs-on: ubuntu-24.04
+    container: swift:6.3.2-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build products and tests
+        run: swift build --build-tests
+      - name: Test
+        run: swift test --skip-build
+      - name: Bridge self-check
+        run: .build/debug/northpane-bridge self-check --json
+
+  linux-static:
+    runs-on: ubuntu-24.04
+    container: swift:6.3.2-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the Static Linux SDK
+        run: swift sdk install "$STATIC_SDK_URL" --checksum "$STATIC_SDK_CHECKSUM"
+      - name: Static Bridge, x86_64
+        run: Scripts/build-static-linux.sh x86_64 artifacts
+      - name: Static Bridge, arm64
+        run: Scripts/build-static-linux.sh aarch64 artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: northpane-bridge-linux
+          path: artifacts/
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: compnerd/gha-setup-swift@397094e75494a93fa8d81db0268dbc8f5d6cf7c6 # v0.4.1
+        with:
+          swift-version: swift-6.3.2-release
+          swift-build: 6.3.2-RELEASE
+      - name: Build products and tests
+        run: swift build --build-tests
+      - name: Test
+        run: swift test --skip-build
+      - name: Bridge self-check
+        run: .build\debug\northpane-bridge.exe self-check --json
+      - name: Release Bridge and its DLL dependencies
+        shell: pwsh
+        run: |
+          swift build -c release --static-swift-stdlib --product northpane-bridge
+          $exe = ".build\release\northpane-bridge.exe"
+          & $exe self-check --json
+          $dumpbin = Get-ChildItem -Recurse -Filter dumpbin.exe "${env:ProgramFiles}\Microsoft Visual Studio" | Where-Object FullName -match 'Hostx64\\x64' | Select-Object -First 1
+          & $dumpbin.FullName /dependents $exe

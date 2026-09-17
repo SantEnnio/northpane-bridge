@@ -1,0 +1,10 @@
+{
+  "host_id": "11111111-1111-1111-1111-111111111111",
+  "incarnation_id": "session-incarnation-42",
+  "snapshot_id": "snapshot-7",
+  "next_event_sequence": 19,
+  "workspaces": [{"id":"workspace-1","label":"Northpane","number":1,"focused":true,"active_tab_id":"tab-1","worktree_path":"/workspace"}],
+  "tabs": [{"id":"tab-1","workspace_id":"workspace-1","label":"Implementation","number":1,"focused":true}],
+  "panes": [{"id":"pane-1","title":"Agent","workspace_id":"workspace-1","tab_id":"tab-1","revision":4,"agent":"Codex","agent_status":"blocked","focused":true}],
+  "capabilities": ["OBSERVE_RUNTIME","TERMINAL_OBSERVE","TERMINAL_CONTROL","ATTENTION"]
+}

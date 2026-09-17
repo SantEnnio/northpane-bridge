@@ -1,0 +1,244 @@
+syntax = "proto3";
+
+package northpane.bridge.v1;
+
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  OBSERVE_RUNTIME = 1;
+  TERMINAL_OBSERVE = 2;
+  TERMINAL_CONTROL = 3;
+  ATTENTION = 4;
+  ARTIFACT_PUBLICATION = 5;
+  PREVIEW = 6;
+  AUTHORIZATION_BROKER = 7;
+}
+
+enum ProblemLocus {
+  PROBLEM_LOCUS_UNSPECIFIED = 0;
+  CLIENT = 1;
+  TRANSPORT = 2;
+  BRIDGE = 3;
+  HERDR = 4;
+  MANAGED_SERVICE = 5;
+}
+
+enum RetryClass {
+  RETRY_CLASS_UNSPECIFIED = 0;
+  NEVER = 1;
+  AFTER_USER_ACTION = 2;
+  AFTER_RECONNECT = 3;
+  AFTER_REFRESH = 4;
+}
+
+enum OperationPhase {
+  OPERATION_PHASE_UNSPECIFIED = 0;
+  HANDSHAKE = 1;
+  TRUST = 2;
+  PAIRING = 3;
+  DISCOVERY = 4;
+  COMPATIBILITY = 5;
+  SNAPSHOT = 6;
+  EVENTS = 7;
+  MUTATION = 8;
+  TERMINAL = 9;
+  RESOURCE = 10;
+  SERVICE = 11;
+}
+
+enum ChannelPurpose {
+  CHANNEL_PURPOSE_UNSPECIFIED = 0;
+  CONTROL = 1;
+  RUNTIME_EVENTS = 2;
+  TERMINAL_CHANNEL = 3;
+  PREVIEW_CHANNEL = 4;
+  ARTIFACT_CHANNEL = 5;
+  AUTHORIZATION_CHANNEL = 6;
+}
+
+enum RuntimeEventType {
+  RUNTIME_EVENT_TYPE_UNSPECIFIED = 0;
+  PANE_OPENED = 1;
+  PANE_CLOSED = 2;
+  PANE_RENAMED = 3;
+}
+
+enum MutationOutcome {
+  MUTATION_OUTCOME_UNSPECIFIED = 0;
+  APPLIED = 1;
+  REJECTED = 2;
+  NOT_APPLIED = 3;
+}
+
+message Envelope {
+  uint32 protocol_major = 1;
+  uint32 schema_revision = 2;
+  string connection_id = 3;
+  string channel_id = 4;
+  string message_id = 5;
+  oneof payload {
+    HandshakeHello handshake_hello = 10;
+    HandshakeAccepted handshake_accepted = 11;
+    Problem problem = 12;
+    OpenChannel open_channel = 13;
+    WindowUpdate window_update = 14;
+    CancelChannel cancel_channel = 15;
+    CloseChannel close_channel = 16;
+    RuntimeSnapshot runtime_snapshot = 17;
+    RuntimeEventBatch runtime_events = 18;
+    MutationRequest mutation = 19;
+    MutationReceipt mutation_receipt = 20;
+    TerminalInput terminal_input = 21;
+    TerminalInputAcknowledgement terminal_acknowledgement = 22;
+    ObserveRuntimeRequest observe_runtime = 23;
+    TerminalAttachRequest terminal_attach = 24;
+    TerminalAttached terminal_attached = 25;
+    TerminalOutput terminal_output = 26;
+    TerminalResize terminal_resize = 27;
+    TerminalRelease terminal_release = 28;
+    Heartbeat heartbeat = 29;
+    PairingChallengeRequest pairing_challenge_request = 30;
+    PairingChallenge pairing_challenge = 31;
+    PairingProof pairing_proof = 32;
+    PairingAccepted pairing_accepted = 33;
+  }
+}
+
+message HandshakeHello {
+  uint32 minimum_protocol_major = 1;
+  uint32 maximum_protocol_major = 2;
+  uint32 minimum_schema_revision = 3;
+  uint32 maximum_schema_revision = 4;
+  string client_device_id = 5;
+  string client_version = 6;
+  uint32 maximum_frame_bytes = 7;
+  bytes host_identity_challenge = 8;
+  string expected_host_fingerprint = 9;
+}
+
+message HandshakeAccepted {
+  uint32 protocol_major = 1;
+  uint32 schema_revision = 2;
+  string host_id = 3;
+  repeated Capability capabilities = 4;
+  string bridge_version = 5;
+  uint32 maximum_frame_bytes = 6;
+  bytes host_signing_public_key = 7;
+  bytes host_identity_signature = 8;
+  string herdr_version = 9;
+}
+
+message Problem {
+  string code = 1;
+  ProblemLocus locus = 2;
+  RetryClass retry_class = 3;
+  string recovery_action = 4;
+  OperationPhase phase = 5;
+  string correlation_id = 6;
+}
+
+message OpenChannel { string channel_id = 1; ChannelPurpose purpose = 2; uint64 initial_window_bytes = 3; }
+message WindowUpdate { string channel_id = 1; uint64 additional_bytes = 2; }
+message CancelChannel { string channel_id = 1; string reason_code = 2; }
+message CloseChannel { string channel_id = 1; }
+message Workspace {
+  string id = 1;
+  string label = 2;
+  uint32 number = 3;
+  bool focused = 4;
+  string active_tab_id = 5;
+  string worktree_path = 6;
+}
+message Tab {
+  string id = 1;
+  string workspace_id = 2;
+  string label = 3;
+  uint32 number = 4;
+  bool focused = 5;
+}
+message Pane {
+  string id = 1;
+  string title = 2;
+  string workspace_id = 3;
+  string tab_id = 4;
+  uint64 revision = 5;
+  string agent = 6;
+  string agent_status = 7;
+  bool focused = 8;
+}
+message RuntimeSnapshot {
+  string host_id = 1;
+  string incarnation_id = 2;
+  string snapshot_id = 3;
+  uint64 next_event_sequence = 4;
+  repeated Pane panes = 5;
+  repeated Capability capabilities = 6;
+  repeated Workspace workspaces = 7;
+  repeated Tab tabs = 8;
+}
+message RuntimeEvent { RuntimeEventType type = 1; string pane_id = 2; string title = 3; }
+message RuntimeEventBatch {
+  string incarnation_id = 1;
+  string snapshot_id = 2;
+  uint64 first_sequence = 3;
+  repeated RuntimeEvent events = 4;
+}
+message MutationRequest {
+  string command_id = 1;
+  string client_device_id = 2;
+  Capability capability = 3;
+  string target_id = 4;
+  uint64 expected_revision = 5;
+  int64 deadline_unix_millis = 6;
+}
+message MutationReceipt { string command_id = 1; MutationOutcome outcome = 2; Problem problem = 3; }
+message TerminalInput { string attachment_id = 1; uint64 sequence = 2; bytes data = 3; }
+message TerminalInputAcknowledgement { string attachment_id = 1; uint64 accepted_through_sequence = 2; }
+message ObserveRuntimeRequest { string session_name = 1; }
+
+enum TerminalAttachMode {
+  TERMINAL_ATTACH_MODE_UNSPECIFIED = 0;
+  TERMINAL_ATTACH_OBSERVE = 1;
+  TERMINAL_ATTACH_CONTROL = 2;
+  TERMINAL_ATTACH_TAKEOVER = 3;
+}
+message TerminalAttachRequest {
+  string pane_id = 1;
+  TerminalAttachMode mode = 2;
+  uint32 columns = 3;
+  uint32 rows = 4;
+  string incarnation_id = 5;
+  string snapshot_id = 6;
+  uint64 next_event_sequence = 7;
+}
+message TerminalAttached {
+  string attachment_id = 1;
+  string pane_id = 2;
+  TerminalAttachMode mode = 3;
+  string controller_device_id = 4;
+}
+message TerminalOutput {
+  string attachment_id = 1;
+  uint64 sequence = 2;
+  bytes data = 3;
+}
+message TerminalResize { string attachment_id = 1; uint32 columns = 2; uint32 rows = 3; }
+message TerminalRelease { string attachment_id = 1; }
+message Heartbeat { int64 sent_unix_millis = 1; }
+message PairingChallengeRequest {}
+message PairingChallenge {
+  string challenge_id = 1;
+  string host_id = 2;
+  bytes nonce = 3;
+  int64 expires_unix_millis = 4;
+}
+message PairingProof {
+  string client_device_id = 1;
+  string challenge_id = 2;
+  bytes public_key = 3;
+  bytes signature = 4;
+}
+message PairingAccepted {
+  string client_device_id = 1;
+  bool observation = 2;
+  bool standard_control = 3;
+}

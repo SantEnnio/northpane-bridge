@@ -1,0 +1,5 @@
+.build/
+.swiftpm/
+.release-artifacts/
+*.xcodeproj
+.DS_Store

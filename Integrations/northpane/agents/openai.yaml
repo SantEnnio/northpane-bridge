@@ -1,0 +1,4 @@
+interface:
+  display_name: "Northpane"
+  short_description: "Publish and inspect Northpane previews"
+  default_prompt: "Use $northpane to publish this project preview or artifact."

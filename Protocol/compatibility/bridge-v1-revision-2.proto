@@ -1,0 +1,324 @@
+syntax = "proto3";
+
+package northpane.bridge.v1;
+
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  OBSERVE_RUNTIME = 1;
+  TERMINAL_OBSERVE = 2;
+  TERMINAL_CONTROL = 3;
+  ATTENTION = 4;
+  ARTIFACT_PUBLICATION = 5;
+  PREVIEW = 6;
+  AUTHORIZATION_BROKER = 7;
+}
+
+enum ProblemLocus {
+  PROBLEM_LOCUS_UNSPECIFIED = 0;
+  CLIENT = 1;
+  TRANSPORT = 2;
+  BRIDGE = 3;
+  HERDR = 4;
+  MANAGED_SERVICE = 5;
+}
+
+enum RetryClass {
+  RETRY_CLASS_UNSPECIFIED = 0;
+  NEVER = 1;
+  AFTER_USER_ACTION = 2;
+  AFTER_RECONNECT = 3;
+  AFTER_REFRESH = 4;
+}
+
+enum OperationPhase {
+  OPERATION_PHASE_UNSPECIFIED = 0;
+  HANDSHAKE = 1;
+  TRUST = 2;
+  PAIRING = 3;
+  DISCOVERY = 4;
+  COMPATIBILITY = 5;
+  SNAPSHOT = 6;
+  EVENTS = 7;
+  MUTATION = 8;
+  TERMINAL = 9;
+  RESOURCE = 10;
+  SERVICE = 11;
+}
+
+enum ChannelPurpose {
+  CHANNEL_PURPOSE_UNSPECIFIED = 0;
+  CONTROL = 1;
+  RUNTIME_EVENTS = 2;
+  TERMINAL_CHANNEL = 3;
+  PREVIEW_CHANNEL = 4;
+  ARTIFACT_CHANNEL = 5;
+  AUTHORIZATION_CHANNEL = 6;
+}
+
+enum RuntimeEventType {
+  RUNTIME_EVENT_TYPE_UNSPECIFIED = 0;
+  PANE_OPENED = 1;
+  PANE_CLOSED = 2;
+  PANE_RENAMED = 3;
+}
+
+enum MutationOutcome {
+  MUTATION_OUTCOME_UNSPECIFIED = 0;
+  APPLIED = 1;
+  REJECTED = 2;
+  NOT_APPLIED = 3;
+}
+
+message Envelope {
+  uint32 protocol_major = 1;
+  uint32 schema_revision = 2;
+  string connection_id = 3;
+  string channel_id = 4;
+  string message_id = 5;
+  oneof payload {
+    HandshakeHello handshake_hello = 10;
+    HandshakeAccepted handshake_accepted = 11;
+    Problem problem = 12;
+    OpenChannel open_channel = 13;
+    WindowUpdate window_update = 14;
+    CancelChannel cancel_channel = 15;
+    CloseChannel close_channel = 16;
+    RuntimeSnapshot runtime_snapshot = 17;
+    RuntimeEventBatch runtime_events = 18;
+    MutationRequest mutation = 19;
+    MutationReceipt mutation_receipt = 20;
+    TerminalInput terminal_input = 21;
+    TerminalInputAcknowledgement terminal_acknowledgement = 22;
+    ObserveRuntimeRequest observe_runtime = 23;
+    TerminalAttachRequest terminal_attach = 24;
+    TerminalAttached terminal_attached = 25;
+    TerminalOutput terminal_output = 26;
+    TerminalResize terminal_resize = 27;
+    TerminalRelease terminal_release = 28;
+    Heartbeat heartbeat = 29;
+    PairingChallengeRequest pairing_challenge_request = 30;
+    PairingChallenge pairing_challenge = 31;
+    PairingProof pairing_proof = 32;
+    PairingAccepted pairing_accepted = 33;
+    ResourceCommand resource_command = 34;
+    ResourceResult resource_result = 35;
+  }
+}
+
+message HandshakeHello {
+  uint32 minimum_protocol_major = 1;
+  uint32 maximum_protocol_major = 2;
+  uint32 minimum_schema_revision = 3;
+  uint32 maximum_schema_revision = 4;
+  string client_device_id = 5;
+  string client_version = 6;
+  uint32 maximum_frame_bytes = 7;
+  bytes host_identity_challenge = 8;
+  string expected_host_fingerprint = 9;
+}
+
+message HandshakeAccepted {
+  uint32 protocol_major = 1;
+  uint32 schema_revision = 2;
+  string host_id = 3;
+  repeated Capability capabilities = 4;
+  string bridge_version = 5;
+  uint32 maximum_frame_bytes = 6;
+  bytes host_signing_public_key = 7;
+  bytes host_identity_signature = 8;
+  string herdr_version = 9;
+}
+
+message Problem {
+  string code = 1;
+  ProblemLocus locus = 2;
+  RetryClass retry_class = 3;
+  string recovery_action = 4;
+  OperationPhase phase = 5;
+  string correlation_id = 6;
+}
+
+message OpenChannel { string channel_id = 1; ChannelPurpose purpose = 2; uint64 initial_window_bytes = 3; }
+message WindowUpdate { string channel_id = 1; uint64 additional_bytes = 2; }
+message CancelChannel { string channel_id = 1; string reason_code = 2; }
+message CloseChannel { string channel_id = 1; }
+message Workspace {
+  string id = 1;
+  string label = 2;
+  uint32 number = 3;
+  bool focused = 4;
+  string active_tab_id = 5;
+  string worktree_path = 6;
+}
+message Tab {
+  string id = 1;
+  string workspace_id = 2;
+  string label = 3;
+  uint32 number = 4;
+  bool focused = 5;
+}
+message Pane {
+  string id = 1;
+  string title = 2;
+  string workspace_id = 3;
+  string tab_id = 4;
+  uint64 revision = 5;
+  string agent = 6;
+  string agent_status = 7;
+  bool focused = 8;
+}
+message RuntimeSnapshot {
+  string host_id = 1;
+  string incarnation_id = 2;
+  string snapshot_id = 3;
+  uint64 next_event_sequence = 4;
+  repeated Pane panes = 5;
+  repeated Capability capabilities = 6;
+  repeated Workspace workspaces = 7;
+  repeated Tab tabs = 8;
+}
+message RuntimeEvent { RuntimeEventType type = 1; string pane_id = 2; string title = 3; }
+message RuntimeEventBatch {
+  string incarnation_id = 1;
+  string snapshot_id = 2;
+  uint64 first_sequence = 3;
+  repeated RuntimeEvent events = 4;
+}
+message MutationRequest {
+  string command_id = 1;
+  string client_device_id = 2;
+  Capability capability = 3;
+  string target_id = 4;
+  uint64 expected_revision = 5;
+  int64 deadline_unix_millis = 6;
+}
+message MutationReceipt { string command_id = 1; MutationOutcome outcome = 2; Problem problem = 3; }
+message TerminalInput { string attachment_id = 1; uint64 sequence = 2; bytes data = 3; }
+message TerminalInputAcknowledgement { string attachment_id = 1; uint64 accepted_through_sequence = 2; }
+message ObserveRuntimeRequest { string session_name = 1; }
+
+enum TerminalAttachMode {
+  TERMINAL_ATTACH_MODE_UNSPECIFIED = 0;
+  TERMINAL_ATTACH_OBSERVE = 1;
+  TERMINAL_ATTACH_CONTROL = 2;
+  TERMINAL_ATTACH_TAKEOVER = 3;
+}
+message TerminalAttachRequest {
+  string pane_id = 1;
+  TerminalAttachMode mode = 2;
+  uint32 columns = 3;
+  uint32 rows = 4;
+  string incarnation_id = 5;
+  string snapshot_id = 6;
+  uint64 next_event_sequence = 7;
+}
+message TerminalAttached {
+  string attachment_id = 1;
+  string pane_id = 2;
+  TerminalAttachMode mode = 3;
+  string controller_device_id = 4;
+}
+message TerminalOutput {
+  string attachment_id = 1;
+  uint64 sequence = 2;
+  bytes data = 3;
+}
+message TerminalResize { string attachment_id = 1; uint32 columns = 2; uint32 rows = 3; }
+message TerminalRelease { string attachment_id = 1; }
+message Heartbeat { int64 sent_unix_millis = 1; }
+message PairingChallengeRequest {}
+message PairingChallenge {
+  string challenge_id = 1;
+  string host_id = 2;
+  bytes nonce = 3;
+  int64 expires_unix_millis = 4;
+}
+message PairingProof {
+  string client_device_id = 1;
+  string challenge_id = 2;
+  bytes public_key = 3;
+  bytes signature = 4;
+}
+message PairingAccepted {
+  string client_device_id = 1;
+  bool observation = 2;
+  bool standard_control = 3;
+}
+
+enum ResourceCommandKind {
+  RESOURCE_COMMAND_KIND_UNSPECIFIED = 0;
+  LIST_RESOURCES = 1;
+  REGISTER_PREVIEW = 2;
+  UPDATE_PREVIEW = 3;
+  CLOSE_PREVIEW = 4;
+  FETCH_PREVIEW_HTTP = 5;
+  PUBLISH_ARTIFACT = 6;
+  READ_ARTIFACT = 7;
+  DELETE_ARTIFACT = 8;
+  LIST_ARTIFACT_ENTRIES = 9;
+  STREAM_PREVIEW_HTTP = 10;
+  OPEN_PREVIEW_WEBSOCKET = 11;
+  SEND_PREVIEW_WEBSOCKET = 12;
+  CLOSE_PREVIEW_WEBSOCKET = 13;
+}
+enum ResourceKind {
+  RESOURCE_KIND_UNSPECIFIED = 0;
+  PREVIEW_RESOURCE = 1;
+  ARTIFACT_RESOURCE = 2;
+}
+enum ViewerAvailability {
+  VIEWER_AVAILABILITY_UNSPECIFIED = 0;
+  VIEWER_AVAILABLE = 1;
+  VIEWER_NONE = 2;
+  VIEWER_UNKNOWN = 3;
+}
+message HTTPHeader { string name = 1; string value = 2; }
+message ResourceCommand {
+  ResourceCommandKind kind = 1;
+  string command_id = 2;
+  string workspace_id = 3;
+  string resource_id = 4;
+  uint64 expected_revision = 5;
+  string path = 6;
+  string origin = 7;
+  string title = 8;
+  string health_path = 9;
+  uint64 ttl_seconds = 10;
+  string media_type = 11;
+  string method = 12;
+  repeated HTTPHeader headers = 13;
+  bytes body = 14;
+  string idempotency_key = 15;
+  uint64 offset = 16;
+  uint64 length = 17;
+  string stream_id = 18;
+}
+message ResourceDescriptor {
+  ResourceKind kind = 1;
+  string resource_id = 2;
+  string workspace_id = 3;
+  uint64 revision = 4;
+  string title = 5;
+  string media_type = 6;
+  string entrypoint = 7;
+  int64 expires_unix_millis = 8;
+  bool healthy = 9;
+  ViewerAvailability viewer_availability = 10;
+}
+message ResourceResult {
+  string command_id = 1;
+  repeated ResourceDescriptor resources = 2;
+  uint32 status_code = 3;
+  repeated HTTPHeader headers = 4;
+  bytes body = 5;
+  string relative_path = 6;
+  string media_type = 7;
+  bool deleted = 8;
+  uint64 total_bytes = 9;
+  repeated ResourceFile files = 10;
+  string stream_id = 11;
+  uint64 sequence = 12;
+  bool is_final = 13;
+  bool is_text = 14;
+}
+message ResourceFile { string relative_path = 1; uint64 byte_count = 2; string content_digest = 3; }

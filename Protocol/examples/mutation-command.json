@@ -1,0 +1,8 @@
+{
+  "command_id": "22222222-2222-2222-2222-222222222222",
+  "client_device_id": "33333333-3333-3333-3333-333333333333",
+  "capability": "OBSERVE_RUNTIME",
+  "target_id": "device:33333333-3333-3333-3333-333333333333:revoke",
+  "expected_revision": 0,
+  "deadline_unix_millis": 1788652800000
+}
