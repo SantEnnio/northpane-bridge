@@ -198,10 +198,12 @@ public actor ProcessBridgeTransport: BridgeTransport {
         // no usable Bridge, and the remedy is the same: install it. Generic messages are only
         // trusted when they name the Bridge, so an unrelated failure keeps its real reason.
         // cmd.exe on a Windows Host cannot run the POSIX launch command and says so in the
-        // system's own language; 9009 is its "command not found". The Bridge may be installed
-        // there perfectly well, so this asks for the Windows command, not for an install.
-        if exitCode == 9009 || detail.contains("is not recognized as an internal or external command")
-            || detail.contains("non e' riconosciuto come comando") || detail.contains("non è riconosciuto come comando") {
+        // system's own language *and* its own code page, which is not UTF-8 (measured on a real
+        // Windows Host: the accented letter arrives as a replacement character). So the match is on
+        // the plain-ASCII part of the message; 9009 is cmd's own "command not found". The Bridge may
+        // be installed there perfectly well, so this asks for the Windows command, not for an install.
+        if exitCode == 9009 || detail.contains("is not recognized as an internal")
+            || detail.contains("riconosciuto come comando") || detail.contains("erkannt") {
             return .remoteShellMismatch(.windows)
         }
         if exitCode == 126 || exitCode == 127

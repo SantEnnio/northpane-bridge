@@ -128,7 +128,9 @@ func sshThatNeverReachedTheHostReportsTheRouteProblemRatherThanAnExitCode(_ scen
 
 @Test(arguments: [
     ("'sh' is not recognized as an internal or external command,\noperable program or batch file.", Int32(1)),
-    ("'sh' non \u{00e8} riconosciuto come comando interno o esterno,", Int32(1)),
+    // cmd's message arrives in the Host's code page, so the accented letter can be lost; matching
+    // must not depend on it (measured on a real Windows Host).
+    ("'sh' non \u{FFFD} riconosciuto come comando interno o esterno,", Int32(1)),
     ("", Int32(9009)),
 ])
 func cmdExeRefusingThePOSIXCommandAsksForTheWindowsOne(_ scenario: (String, Int32)) {
