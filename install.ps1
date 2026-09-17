@@ -101,11 +101,15 @@ try {
     Say "previous=$previous"
     Say "activated=$Version"
 
-    # Keep the active version and the one before it, so the app can still roll back.
+    # Keep the active version and the one before it, so the app can still roll back. An older
+    # version whose Bridge is still running cannot be deleted on Windows; it is left for next time
+    # rather than failing an install that already succeeded.
     $keep = @($Version)
     $previousFile = Join-Path $root "previous-version.txt"
     if (Test-Path $previousFile) { $keep += (Get-Content -Raw $previousFile).Trim() }
-    Get-ChildItem -Directory $versions | Where-Object { $keep -notcontains $_.Name } | Remove-Item -Recurse -Force
+    Get-ChildItem -Directory $versions | Where-Object { $keep -notcontains $_.Name } | ForEach-Object {
+        Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue
+    }
 } finally {
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 }

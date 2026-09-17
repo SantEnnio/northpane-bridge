@@ -11,9 +11,10 @@ public enum BridgeProtocol {
 }
 
 /// The Herdr releases the live conformance run (`liveHerdrConformance`) has certified: 0.8.2 (protocol 20,
-/// the baseline), 0.9.0 and 0.9.1 (protocol 22, endpoint generation 1), all run on 2026-09-16
-/// against isolated headless servers. Any other release is uncertified and needs the Operator's
-/// acknowledgement before use; adding one here means the run passed, not that it looked fine.
+/// the baseline), 0.9.0 and 0.9.1 (protocol 22, endpoint generation 1), against isolated headless
+/// servers on macOS and Linux (2026-09-16) and on Windows (0.9.1, 2026-09-17). Any other release is
+/// uncertified and needs the Operator's acknowledgement before use; adding one here means the run
+/// passed, not that it looked fine.
 public enum HerdrCertifiedReleases {
     public static let versions: Set<String> = ["0.8.2", "0.9.0", "0.9.1"]
 }
