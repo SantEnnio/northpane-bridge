@@ -86,13 +86,13 @@ try {
     $currentFile = Join-Path $root "current-version.txt"
     $previous = "none"
     if (Test-Path $currentFile) { $previous = (Get-Content -Raw $currentFile).Trim() }
-    if ($previous -ne "none" -and $previous -ne $Version) { Set-Content -NoNewline (Join-Path $root "previous-version.txt") $previous }
+    if ($previous -ne "none" -and $previous -ne $Version) { [IO.File]::WriteAllText((Join-Path $root "previous-version.txt"), $previous) }
     # A junction needs no administrator rights, unlike a symbolic link, and PATH resolves through it,
     # so the executable finds its DLLs beside it whichever version is active.
     $current = Join-Path $root "current"
     if (Test-Path $current) { (Get-Item $current).Delete() }
     New-Item -ItemType Junction -Path $current -Target $target | Out-Null
-    Set-Content -NoNewline $currentFile $Version
+    [IO.File]::WriteAllText($currentFile, $Version)
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if (-not $userPath) { $userPath = "" }
     if (($userPath -split ';') -notcontains $current) {

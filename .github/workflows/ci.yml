@@ -90,6 +90,7 @@ jobs:
             Copy-Item $zip $copy
             pwsh -NoProfile -File ./install.ps1 -Version $version -Sha256 $digest -File $copy
             if ($LASTEXITCODE -ne 0) { throw "install $version failed with $LASTEXITCODE" }
+            Get-ChildItem -Force (Join-Path $env:LOCALAPPDATA "Northpane\Bridge") | Format-Table Mode, Name, Target -AutoSize | Out-String | Write-Output
           }
           $root = Join-Path $env:LOCALAPPDATA "Northpane\Bridge"
           $kept = (Get-ChildItem -Directory (Join-Path $root "versions")).Name | Sort-Object
