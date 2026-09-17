@@ -1,0 +1,105 @@
+name: Release
+
+# Push a tag v<version>, where <version> is NorthpaneRelease.version in
+# Sources/NorthpaneProtocol/BridgeContract.swift.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  STATIC_SDK_URL: https://download.swift.org/swift-6.3.2-release/static-sdk/swift-6.3.2-RELEASE/swift-6.3.2-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
+  STATIC_SDK_CHECKSUM: 3fd798bef6f4408f1ea5a6f94ce4d4052830c4326ab85ebc04f983f01b3da407
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        name: The tag names the version the Bridge reports
+        run: |
+          version=$(sed -n 's/.*public static let version = "\(.*\)".*/\1/p' Sources/NorthpaneProtocol/BridgeContract.swift)
+          test -n "$version"
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME does not match NorthpaneRelease.version $version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: version
+    runs-on: ubuntu-24.04
+    container: swift:6.3.2-noble
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift sdk install "$STATIC_SDK_URL" --checksum "$STATIC_SDK_CHECKSUM"
+      - run: Scripts/build-static-linux.sh x86_64 artifacts
+      - run: Scripts/build-static-linux.sh aarch64 artifacts
+      - name: The x86_64 binary reports the tagged version
+        run: |
+          gzip -dc artifacts/northpane-bridge-linux-x86_64.gz > /tmp/bridge && chmod +x /tmp/bridge
+          /tmp/bridge --version | grep -F "northpane-bridge ${{ needs.version.outputs.version }} "
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: artifacts/*.gz
+
+  windows:
+    needs: version
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: compnerd/gha-setup-swift@397094e75494a93fa8d81db0268dbc8f5d6cf7c6 # v0.4.1
+        with:
+          swift-version: swift-6.3.2-release
+          swift-build: 6.3.2-RELEASE
+      - name: Package the Windows Bridge
+        shell: pwsh
+        run: Scripts/package-windows.ps1 -Version "${{ needs.version.outputs.version }}" -OutputDirectory artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: artifacts/*.zip
+
+  publish:
+    needs: [version, linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Digests, version and the pin the apps read
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          cp install.sh install.ps1 LICENSE THIRD_PARTY_NOTICES.md assets/
+          printf '%s\n' "$VERSION" > assets/VERSION
+          cd assets
+          sha256sum northpane-bridge-* install.sh install.ps1 > SHA256SUMS
+          python3 - <<'EOF'
+          import json, os
+          version = os.environ["VERSION"]
+          entries = {}
+          for line in open("SHA256SUMS"):
+              digest, name = line.split()
+              if name.startswith("northpane-bridge-"):
+                  platform = name[len("northpane-bridge-"):].split(".")[0]
+                  entries[platform] = {"asset": name, "sha256": digest}
+              elif name in ("install.sh", "install.ps1"):
+                  entries.setdefault("_scripts", {})[name] = digest
+          scripts = entries.pop("_scripts")
+          json.dump({"version": version, "platforms": entries, "scripts": scripts},
+                    open("release.json", "w"), indent=2, sort_keys=True)
+          EOF
+          cat release.json
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: gh release create "$GITHUB_REF_NAME" assets/* --title "Northpane Bridge $VERSION" --notes "Install: see README. Digests in SHA256SUMS; release.json is what the Northpane apps pin." --prerelease --verify-tag

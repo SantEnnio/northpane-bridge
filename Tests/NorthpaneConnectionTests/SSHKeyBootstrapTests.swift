@@ -1,3 +1,6 @@
+// The key bootstrap and its tests drive the system ssh, ssh-keygen and shell scripts: macOS and Linux only,
+// like SSHKeyBootstrap itself.
+#if os(macOS) || os(Linux)
 import Foundation
 import Testing
 @testable import NorthpaneConnection
@@ -237,3 +240,4 @@ private func fakeSSHWithTwoPrompts(in directory: URL, acceptedPassword: String) 
     let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.hasPrefix("northpane-ssh-bootstrap-") }
     #expect(leftovers.isEmpty)
 }
+#endif
