@@ -6,10 +6,10 @@
 #
 #   & install.ps1 -Version 1.0.0 -Sha256 <hex> [-Url https://...] [-File <path already on the Host>]
 #
-# Layout (shared with earlier Northpane installs):
-#   %LOCALAPPDATA%\Northpane\Bridge\versions\<version>\northpane-bridge.exe
+# Layout:
+#   %LOCALAPPDATA%\Northpane\Bridge\versions\<version>\   northpane-bridge.exe and the DLLs it needs
+#   %LOCALAPPDATA%\Northpane\Bridge\current               junction to the active version, on the user PATH
 #   %LOCALAPPDATA%\Northpane\Bridge\current-version.txt, previous-version.txt
-#   %USERPROFILE%\.local\bin\northpane-bridge.exe   (a copy; added to the user PATH)
 #
 # Machine-readable lines on stdout start with "northpane-install ". Exit codes match install.sh:
 #   2 usage, 21 download failed, 22 digest mismatch, 23 self-check failed, 24 unsupported platform
@@ -72,24 +72,31 @@ try {
     if ($actual -ne $Sha256) { Fail 22 "digest mismatch: expected $Sha256, got $actual" }
 
     $root = Join-Path $env:LOCALAPPDATA "Northpane\Bridge"
-    $target = Join-Path $root "versions\$Version"
-    New-Item -ItemType Directory -Force -Path $target | Out-Null
-    Expand-Archive -Force -Path $archive -DestinationPath (Join-Path $work "unpacked")
-    Copy-Item -Force (Join-Path $work "unpacked\northpane-bridge.exe") (Join-Path $target "northpane-bridge.exe")
-    & (Join-Path $target "northpane-bridge.exe") self-check --json | Out-Null
+    $versions = Join-Path $root "versions"
+    $target = Join-Path $versions $Version
+    $unpacked = Join-Path $work "unpacked"
+    Expand-Archive -Force -Path $archive -DestinationPath $unpacked
+    if (-not (Test-Path (Join-Path $unpacked "northpane-bridge.exe"))) { Fail 21 "the archive holds no northpane-bridge.exe" }
+    & (Join-Path $unpacked "northpane-bridge.exe") self-check --json | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail 23 "the downloaded Bridge failed its self-check" }
+    New-Item -ItemType Directory -Force -Path $versions | Out-Null
+    if (Test-Path $target) { Remove-Item -Recurse -Force $target }
+    Move-Item $unpacked $target
 
     $currentFile = Join-Path $root "current-version.txt"
     $previous = "none"
     if (Test-Path $currentFile) { $previous = (Get-Content -Raw $currentFile).Trim() }
     if ($previous -ne "none" -and $previous -ne $Version) { Set-Content -NoNewline (Join-Path $root "previous-version.txt") $previous }
-    $bin = Join-Path $HOME ".local\bin"
-    New-Item -ItemType Directory -Force -Path $bin | Out-Null
-    Copy-Item -Force (Join-Path $target "northpane-bridge.exe") (Join-Path $bin "northpane-bridge.exe")
+    # A junction needs no administrator rights, unlike a symbolic link, and PATH resolves through it,
+    # so the executable finds its DLLs beside it whichever version is active.
+    $current = Join-Path $root "current"
+    if (Test-Path $current) { (Get-Item $current).Delete() }
+    New-Item -ItemType Junction -Path $current -Target $target | Out-Null
     Set-Content -NoNewline $currentFile $Version
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    if (($userPath -split ';') -notcontains $bin) {
-        [Environment]::SetEnvironmentVariable("Path", (($userPath.TrimEnd(';') + ';' + $bin).Trim(';')), "User")
+    if (-not $userPath) { $userPath = "" }
+    if (($userPath -split ';') -notcontains $current) {
+        [Environment]::SetEnvironmentVariable("Path", (($userPath.TrimEnd(';') + ';' + $current).Trim(';')), "User")
     }
     Say "previous=$previous"
     Say "activated=$Version"
@@ -98,7 +105,7 @@ try {
     $keep = @($Version)
     $previousFile = Join-Path $root "previous-version.txt"
     if (Test-Path $previousFile) { $keep += (Get-Content -Raw $previousFile).Trim() }
-    Get-ChildItem -Directory (Join-Path $root "versions") | Where-Object { $keep -notcontains $_.Name } | Remove-Item -Recurse -Force
+    Get-ChildItem -Directory $versions | Where-Object { $keep -notcontains $_.Name } | Remove-Item -Recurse -Force
 } finally {
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 }

@@ -31,12 +31,13 @@ irm https://github.com/SantEnnio/northpane-bridge/releases/latest/download/insta
 
 The script checks the download against the release's `SHA256SUMS`, installs into
 `~/.local/share/northpane/bridge/versions/<version>` (`%LOCALAPPDATA%\Northpane\Bridge` on
-Windows), keeps the previous version for rollback and links `~/.local/bin/northpane-bridge`.
+Windows, where the active version is the `current` junction on your PATH), keeps the previous
+version for rollback and links `~/.local/bin/northpane-bridge`.
 
 | Host | Binary |
 | --- | --- |
 | Linux x86_64 and arm64 | fully static (musl): no Swift runtime or particular glibc needed |
-| Windows x86_64 | in progress: built and tested in CI, not yet released |
+| Windows x86_64 | executable with the Swift and Visual C++ runtime DLLs beside it |
 | macOS | installed by the Mac app from its own signed copy |
 
 Herdr must be installed on the Host. The Bridge finds it in `~/.local/bin` (Herdr's
