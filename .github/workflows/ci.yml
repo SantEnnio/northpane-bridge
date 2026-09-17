@@ -59,17 +59,47 @@ jobs:
         with:
           swift-version: swift-6.3.2-release
           swift-build: 6.3.2-RELEASE
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: windows-build-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
+          restore-keys: windows-build-${{ hashFiles('Package.resolved') }}-
       - name: Build products and tests
         run: swift build --build-tests
       - name: Test
         run: swift test --skip-build
       - name: Bridge self-check
         run: .build\debug\northpane-bridge.exe self-check --json
-      - name: Release Bridge and its DLL dependencies
+      - name: Package the Windows Bridge with its DLLs
+        shell: pwsh
+        run: Scripts/package-windows.ps1 -OutputDirectory artifacts
+      - name: install.ps1 installs the package for the current user
         shell: pwsh
         run: |
-          swift build -c release --static-swift-stdlib --product northpane-bridge
-          $exe = ".build\release\northpane-bridge.exe"
-          & $exe self-check --json
-          $dumpbin = Get-ChildItem -Recurse -Filter dumpbin.exe "${env:ProgramFiles}\Microsoft Visual Studio" | Where-Object FullName -match 'Hostx64\\x64' | Select-Object -First 1
-          & $dumpbin.FullName /dependents $exe
+          $zip = Resolve-Path artifacts/northpane-bridge-windows-x86_64.zip
+          $digest = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "localappdata"
+          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
+
+          Copy-Item $zip (Join-Path $env:RUNNER_TEMP "wrong.zip")
+          pwsh -NoProfile -File ./install.ps1 -Version 0.0.1 -Sha256 ("0" * 64) -File (Join-Path $env:RUNNER_TEMP "wrong.zip")
+          if ($LASTEXITCODE -ne 22) { throw "a wrong digest must exit 22, got $LASTEXITCODE" }
+
+          foreach ($version in "0.0.1", "0.0.2", "0.0.3") {
+            $copy = Join-Path $env:RUNNER_TEMP "bridge-$version.zip"
+            Copy-Item $zip $copy
+            pwsh -NoProfile -File ./install.ps1 -Version $version -Sha256 $digest -File $copy
+            if ($LASTEXITCODE -ne 0) { throw "install $version failed with $LASTEXITCODE" }
+            Get-ChildItem -Force (Join-Path $env:LOCALAPPDATA "Northpane\Bridge") | Format-Table Mode, Name, Target -AutoSize | Out-String | Write-Output
+          }
+          $root = Join-Path $env:LOCALAPPDATA "Northpane\Bridge"
+          $kept = (Get-ChildItem -Directory (Join-Path $root "versions")).Name | Sort-Object
+          if (($kept -join ",") -ne "0.0.2,0.0.3") { throw "expected versions 0.0.2 and 0.0.3 to be kept, found $($kept -join ',')" }
+          if ((Get-Content -Raw (Join-Path $root "current-version.txt")).Trim() -ne "0.0.3") { throw "current is not 0.0.3" }
+          $env:Path = "$env:SystemRoot\System32;$env:SystemRoot"
+          & (Join-Path $root "current\northpane-bridge.exe") self-check --json
+          if ($LASTEXITCODE -ne 0) { throw "the installed Bridge does not start through the junction" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: northpane-bridge-windows
+          path: artifacts/

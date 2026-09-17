@@ -62,6 +62,7 @@ struct NorthpaneBridge {
            arguments[0] == "serve", arguments[1] == "--private",
            arguments[4] == "--certificate", arguments[6] == "--key",
            let port = Int(arguments[3]), (1...65_535).contains(port) {
+            #if canImport(NIOSSL)
             do {
                 let context = try await BridgeHostContext()
                 let server = try PrivateWebSocketServer(
@@ -82,6 +83,10 @@ struct NorthpaneBridge {
                 FileHandle.standardError.write(Data("northpane-bridge: private endpoint failed\n".utf8))
                 Foundation.exit(1)
             }
+            #else
+            FileHandle.standardError.write(Data("northpane-bridge: the private endpoint is not available on this platform; connect over SSH\n".utf8))
+            Foundation.exit(1)
+            #endif
             return
         }
         switch arguments {

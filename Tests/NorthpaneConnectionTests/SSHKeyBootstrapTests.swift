@@ -1,3 +1,6 @@
+// The key bootstrap and its tests drive the system ssh, ssh-keygen and shell scripts: macOS and Linux only,
+// like SSHKeyBootstrap itself.
+#if os(macOS) || os(Linux)
 import Foundation
 import Testing
 @testable import NorthpaneConnection
@@ -192,6 +195,28 @@ private func fakeSSHWithTwoPrompts(in directory: URL, acceptedPassword: String) 
 }
 
 
+/// Writes an `ssh` stand-in that exits at once, and returns only when it can be started. On Linux a
+/// test running in parallel can fork while the script is still open for writing; until that child
+/// execs, starting the script fails with "text file busy", which is the test's race, not the product's.
+private func instantSSH(in directory: URL) async throws -> URL {
+    let instant = directory.appending(path: "fake-ssh-instant")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: instant)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: instant.path)
+    for attempt in 1...50 {
+        let probe = Process()
+        probe.executableURL = instant
+        do {
+            try probe.run()
+            probe.waitUntilExit()
+            return instant
+        } catch where attempt < 50 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+    return instant
+}
+
+
 /// Every prompt is served from its own FIFO, so no amount of CPU contention can make the
 /// feeder hand one askpass helper two copies of the password. This load also exercises the
 /// termination handling around a process that has already exited by the time it is awaited.
@@ -199,9 +224,7 @@ private func fakeSSHWithTwoPrompts(in directory: URL, acceptedPassword: String) 
     let directory = try privateDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let key = try NativeSSHCredential().authorizedKey
-    let instant = directory.appending(path: "fake-ssh-instant")
-    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: instant)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: instant.path)
+    let instant = try await instantSSH(in: directory)
     let bootstrap = SSHKeyBootstrap(sshExecutable: instant, timeout: 20, temporaryRoot: directory)
 
     for _ in 0..<12 {
@@ -225,9 +248,7 @@ private func fakeSSHWithTwoPrompts(in directory: URL, acceptedPassword: String) 
     let directory = try privateDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let key = try NativeSSHCredential().authorizedKey
-    let instant = directory.appending(path: "fake-ssh-instant")
-    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: instant)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: instant.path)
+    let instant = try await instantSSH(in: directory)
     let bootstrap = SSHKeyBootstrap(sshExecutable: instant, timeout: 20, temporaryRoot: directory)
 
     for _ in 0..<25 {
@@ -237,3 +258,4 @@ private func fakeSSHWithTwoPrompts(in directory: URL, acceptedPassword: String) 
     let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.hasPrefix("northpane-ssh-bootstrap-") }
     #expect(leftovers.isEmpty)
 }
+#endif

@@ -312,3 +312,17 @@ private final class EventCounter: @unchecked Sendable {
     subscription.stop()
 }
 #endif
+
+/// Herdr 0.9.1 keeps its Windows config in %APPDATA%\herdr (XDG_CONFIG_HOME wins when set), and the
+/// socket path there names the marker file of a named pipe.
+@Test func herdrSocketPathOnWindowsFollowsHerdrsConfigDirectory() {
+    func resolve(_ session: String?, _ environment: [String: String]) -> String {
+        HerdrEventSubscription.resolveSocketPath(sessionName: session, environment: environment, windows: true)
+    }
+    let appData = #"C:\Users\op\AppData\Roaming"#
+    #expect(resolve(nil, ["APPDATA": appData]) == #"C:\Users\op\AppData\Roaming\herdr\herdr.sock"#)
+    #expect(resolve("work", ["APPDATA": appData + #"\"#]) == #"C:\Users\op\AppData\Roaming\herdr\sessions\work\herdr.sock"#)
+    #expect(resolve(nil, ["USERPROFILE": #"C:\Users\op"#]) == #"C:\Users\op\AppData\Roaming\herdr\herdr.sock"#)
+    #expect(resolve(nil, ["XDG_CONFIG_HOME": #"D:\cfg"#, "APPDATA": appData]) == #"D:\cfg\herdr\herdr.sock"#)
+    #expect(resolve("work", ["HERDR_SOCKET_PATH": #"E:\s.sock"#]) == #"E:\s.sock"#)
+}

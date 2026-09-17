@@ -40,6 +40,8 @@ func handshakeSnapshotAndEventsUseTheSameEnvelopeOnEveryTransport(_ kind: Transp
     }
 }
 
+// These run shell scripts standing in for the Bridge and for ssh: POSIX Hosts only.
+#if !os(Windows)
 @Test func processByteStreamTransportCarriesRealLengthPrefixedProtobuf() async throws {
     let transport = try ProcessBridgeTransport(kind: .ssh, executableURL: URL(fileURLWithPath: "/bin/cat"), arguments: [])
     let expected = Envelope(connectionID: ConnectionID(), channelID: ChannelID(), payload: .problem(.incompatibleProtocol))
@@ -92,6 +94,8 @@ func sshThatNeverReachedTheHostReportsTheRouteProblemRatherThanAnExitCode(_ scen
     }
     await transport.close()
 }
+
+#endif
 
 @Test func anUnrecognizedSSHFailureKeepsItsExitCodeRatherThanClaimingAnUnreachableHost() {
     let failure = ProcessBridgeTransport.classifyFailure(

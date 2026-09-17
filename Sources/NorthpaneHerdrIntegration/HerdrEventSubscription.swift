@@ -46,17 +46,36 @@ public final class HerdrEventSubscription: @unchecked Sendable {
         self.init(socketPath: Self.resolveSocketPath(sessionName: sessionName, environment: environment), scope: scope)
     }
 
-    public static func resolveSocketPath(sessionName: String?, environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+    /// Where Herdr's API socket is, the way Herdr 0.9.1 resolves it: `HERDR_SOCKET_PATH`, else the
+    /// config directory (`XDG_CONFIG_HOME/herdr`, else `~/.config/herdr`; on Windows
+    /// `%APPDATA%\herdr`) with `sessions/<name>/` for a named session. On Windows the path names a
+    /// marker file, and the socket itself is the named pipe `\\.\pipe\<path>`.
+    public static func resolveSocketPath(sessionName: String?, environment: [String: String] = ProcessInfo.processInfo.environment, windows: Bool = isWindows) -> String {
         if let explicit = environment["HERDR_SOCKET_PATH"], !explicit.isEmpty { return explicit }
+        let session = sessionName.flatMap { $0.isEmpty ? nil : $0 }
+        if windows {
+            let base = [environment["XDG_CONFIG_HOME"], environment["APPDATA"],
+                        environment["USERPROFILE"].map { $0 + #"\AppData\Roaming"# }]
+                .compactMap { $0 }.first { !$0.isEmpty } ?? ""
+            var components = [base.hasSuffix(#"\"#) ? String(base.dropLast()) : base, "herdr"]
+            if let session { components += ["sessions", session] }
+            return (components + ["herdr.sock"]).joined(separator: #"\"#)
+        }
         let base = environment["XDG_CONFIG_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config", directoryHint: .isDirectory)
         var directory = base.appending(path: "herdr", directoryHint: .isDirectory)
-        if let sessionName, !sessionName.isEmpty {
+        if let session {
             directory.append(path: "sessions", directoryHint: .isDirectory)
-            directory.append(path: sessionName, directoryHint: .isDirectory)
+            directory.append(path: session, directoryHint: .isDirectory)
         }
         return directory.appending(path: "herdr.sock").path
     }
+
+    #if os(Windows)
+    public static let isWindows = true
+    #else
+    public static let isWindows = false
+    #endif
 
     public func start(
         onEvent: @escaping @Sendable () -> Void,
@@ -68,11 +87,24 @@ public final class HerdrEventSubscription: @unchecked Sendable {
             self.onEvent = onEvent
             self.onClose = onClose
         }
+        #if os(Windows)
+        // A named pipe has no readability source here: a dedicated thread blocks on reads instead.
+        Thread.detachNewThread { [weak self] in
+            while true {
+                let data = file.availableData
+                guard let self else { return }
+                guard !data.isEmpty else { self.finish(nil); return }
+                self.consume(data)
+                if self.lock.withLock({ self.stopped }) { return }
+            }
+        }
+        #else
         file.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { self?.finish(nil); return }
             self?.consume(data)
         }
+        #endif
 
         let request: [String: Any] = [
             "id": requestID,
@@ -81,8 +113,11 @@ public final class HerdrEventSubscription: @unchecked Sendable {
         ]
         var data = try JSONSerialization.data(withJSONObject: request)
         data.append(0x0A)
-        do { try Self.writeAll(data, to: file.fileDescriptor) }
-        catch { finish(error); throw error }
+        do { try file.write(contentsOf: data) }
+        catch {
+            finish(HerdrRuntimeError.sessionNotRunning)
+            throw HerdrRuntimeError.sessionNotRunning
+        }
 
         try await withCheckedThrowingContinuation { continuation in
             let immediate = lock.withLock { () -> Result<Void, Error>? in
@@ -190,6 +225,9 @@ public final class HerdrEventSubscription: @unchecked Sendable {
             throw HerdrRuntimeError.sessionNotRunning
         }
         return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+#elseif os(Windows)
+        guard let pipe = FileHandle(forUpdatingAtPath: #"\\.\pipe\"# + path) else { throw HerdrRuntimeError.sessionNotRunning }
+        return pipe
 #else
         throw HerdrRuntimeError.executableUnavailable
 #endif
@@ -201,19 +239,4 @@ public final class HerdrEventSubscription: @unchecked Sendable {
 #elseif canImport(Darwin) || canImport(Musl)
     private static let streamSocketType = SOCK_STREAM
 #endif
-
-    private static func writeAll(_ data: Data, to descriptor: Int32) throws {
-        try data.withUnsafeBytes { raw in
-            var offset = 0
-            while offset < raw.count {
-#if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
-                let written = Foundation.write(descriptor, raw.baseAddress!.advanced(by: offset), raw.count - offset)
-#else
-                let written = -1
-#endif
-                guard written > 0 else { throw HerdrRuntimeError.sessionNotRunning }
-                offset += written
-            }
-        }
-    }
 }

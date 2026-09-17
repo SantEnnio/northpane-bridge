@@ -1,3 +1,4 @@
+#if canImport(NIOSSL)
 @preconcurrency import Crypto
 import Foundation
 import NIOCore
@@ -272,3 +273,4 @@ private final class HTTPResponsePartAdapter: ChannelOutboundHandler, @unchecked 
         }
     }
 }
+#endif

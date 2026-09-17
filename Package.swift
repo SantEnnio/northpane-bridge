@@ -45,7 +45,8 @@ let package = Package(
             .product(name: "NIOPosix", package: "swift-nio"),
             .product(name: "NIOHTTP1", package: "swift-nio"),
             .product(name: "NIOWebSocket", package: "swift-nio"),
-            .product(name: "NIOSSL", package: "swift-nio-ssl"),
+            // swift-nio-ssl does not build on Windows: a Windows Host has no Private Bridge endpoint and is reached over SSH.
+            .product(name: "NIOSSL", package: "swift-nio-ssl", condition: .when(platforms: [.macOS, .linux])),
             .product(name: "Crypto", package: "swift-crypto"),
         ]),
         .executableTarget(name: "NorthpaneCLI", dependencies: ["NorthpaneProtocol", "NorthpaneConnection"]),
