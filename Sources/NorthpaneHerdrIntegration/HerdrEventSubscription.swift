@@ -81,8 +81,11 @@ public final class HerdrEventSubscription: @unchecked Sendable {
         ]
         var data = try JSONSerialization.data(withJSONObject: request)
         data.append(0x0A)
-        do { try Self.writeAll(data, to: file.fileDescriptor) }
-        catch { finish(error); throw error }
+        do { try file.write(contentsOf: data) }
+        catch {
+            finish(HerdrRuntimeError.sessionNotRunning)
+            throw HerdrRuntimeError.sessionNotRunning
+        }
 
         try await withCheckedThrowingContinuation { continuation in
             let immediate = lock.withLock { () -> Result<Void, Error>? in
@@ -201,19 +204,4 @@ public final class HerdrEventSubscription: @unchecked Sendable {
 #elseif canImport(Darwin) || canImport(Musl)
     private static let streamSocketType = SOCK_STREAM
 #endif
-
-    private static func writeAll(_ data: Data, to descriptor: Int32) throws {
-        try data.withUnsafeBytes { raw in
-            var offset = 0
-            while offset < raw.count {
-#if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
-                let written = Foundation.write(descriptor, raw.baseAddress!.advanced(by: offset), raw.count - offset)
-#else
-                let written = -1
-#endif
-                guard written > 0 else { throw HerdrRuntimeError.sessionNotRunning }
-                offset += written
-            }
-        }
-    }
 }

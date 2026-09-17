@@ -59,6 +59,11 @@ jobs:
         with:
           swift-version: swift-6.3.2-release
           swift-build: 6.3.2-RELEASE
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: windows-build-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
+          restore-keys: windows-build-${{ hashFiles('Package.resolved') }}-
       - name: Build products and tests
         run: swift build --build-tests
       - name: Test
