@@ -91,10 +91,22 @@ public struct HerdrProcessRunner: HerdrCommandRunning {
                 process.standardOutput = output
                 process.standardError = errors
                 do {
+                    HerdrTrace.log("herdr run \(arguments.first(where: { !$0.hasPrefix("-") }) ?? "") \(arguments.dropFirst().prefix(2).joined(separator: " "))")
                     try process.run()
-                    process.waitUntilExit()
+                    // Both pipes are drained before waiting: a child whose output outgrows the pipe
+                    // buffer (a few KB on Windows) blocks until someone reads, so waiting first would
+                    // deadlock on a large snapshot.
+                    let errorReader = DispatchGroup()
+                    nonisolated(unsafe) var errorData = Data()
+                    errorReader.enter()
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        errorData = errors.fileHandleForReading.readDataToEndOfFile()
+                        errorReader.leave()
+                    }
                     let data = output.fileHandleForReading.readDataToEndOfFile()
-                    let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+                    errorReader.wait()
+                    process.waitUntilExit()
+                    HerdrTrace.log("herdr exit \(process.terminationStatus), \(data.count) bytes")
                     guard process.terminationStatus == 0 else {
                         let detail = String(data: errorData.isEmpty ? data : errorData, encoding: .utf8) ?? "herdr command failed"
                         continuation.resume(throwing: HerdrRuntimeError.commandFailed(detail.trimmingCharacters(in: .whitespacesAndNewlines)))
@@ -409,6 +421,9 @@ public final class HerdrTerminalSession: @unchecked Sendable {
     private var process: Process?
     private var input: FileHandle?
     private var pending = Data()
+    #if os(Windows)
+    private var windowsReader: WindowsPipeReader?
+    #endif
 
     public init(executableURL: URL, paneID: String, sessionName: String? = nil, mode: Mode) {
         self.executableURL = executableURL; self.paneID = paneID; self.sessionName = sessionName; self.mode = mode
@@ -432,15 +447,23 @@ public final class HerdrTerminalSession: @unchecked Sendable {
         process.standardInput = inputPipe
         process.standardOutput = outputPipe
         process.standardError = errorPipe
+        #if os(Windows)
+        let reader = WindowsPipeReader(outputPipe.fileHandleForReading)
+        windowsReader = reader
+        reader.start(onData: { [weak self] data in self?.consume(data, onOutput: onOutput) }, onEnd: {})
+        #else
         outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
             self?.consume(data, onOutput: onOutput)
         }
+        #endif
         process.terminationHandler = { process in
+            HerdrTrace.log("terminal session ended with \(process.terminationStatus)")
             let error: Error? = process.terminationStatus == 0 ? nil : HerdrRuntimeError.commandFailed(String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "terminal session failed")
             onClose(error)
         }
+        HerdrTrace.log("terminal session \(mode) \(paneID) starting")
         do { try process.run() }
         catch { throw HerdrRuntimeError.commandFailed(error.localizedDescription) }
         self.process = process
@@ -471,7 +494,14 @@ public final class HerdrTerminalSession: @unchecked Sendable {
         let process = self.process
         self.process = nil
         input = nil
+        #if os(Windows)
+        let reader = windowsReader
+        windowsReader = nil
+        #endif
         lock.unlock()
+        #if os(Windows)
+        reader?.cancel()
+        #endif
         if process?.isRunning == true { process?.terminate() }
     }
 

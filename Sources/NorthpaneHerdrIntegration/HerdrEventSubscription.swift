@@ -32,6 +32,9 @@ public final class HerdrEventSubscription: @unchecked Sendable {
     private let requestID = "northpane-\(UUID().uuidString)"
     private let lock = NSLock()
     private var handle: FileHandle?
+    #if os(Windows)
+    private var windowsReader: WindowsPipeReader?
+    #endif
     private var buffered = Data()
     private var acknowledged = false
     private var stopped = false
@@ -81,24 +84,14 @@ public final class HerdrEventSubscription: @unchecked Sendable {
         onEvent: @escaping @Sendable () -> Void,
         onClose: @escaping @Sendable (Error?) -> Void
     ) async throws {
+        HerdrTrace.log("event subscription connecting to \(socketPath)")
         let file = try Self.connect(path: socketPath)
         lock.withLock {
             self.handle = file
             self.onEvent = onEvent
             self.onClose = onClose
         }
-        #if os(Windows)
-        // A named pipe has no readability source here: a dedicated thread blocks on reads instead.
-        Thread.detachNewThread { [weak self] in
-            while true {
-                let data = file.availableData
-                guard let self else { return }
-                guard !data.isEmpty else { self.finish(nil); return }
-                self.consume(data)
-                if self.lock.withLock({ self.stopped }) { return }
-            }
-        }
-        #else
+        #if !os(Windows)
         file.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { self?.finish(nil); return }
@@ -118,6 +111,15 @@ public final class HerdrEventSubscription: @unchecked Sendable {
             finish(HerdrRuntimeError.sessionNotRunning)
             throw HerdrRuntimeError.sessionNotRunning
         }
+        #if os(Windows)
+        // The request goes before the reader starts: a pipe opened for synchronous I/O runs one
+        // operation at a time, and a read already waiting would hold the write back until Herdr
+        // gives up on the request.
+        let reader = WindowsPipeReader(file)
+        lock.withLock { windowsReader = reader }
+        reader.start(onData: { [weak self] data in self?.consume(data) },
+                     onEnd: { [weak self] in self?.finish(nil) })
+        #endif
 
         try await withCheckedThrowingContinuation { continuation in
             let immediate = lock.withLock { () -> Result<Void, Error>? in
@@ -157,6 +159,7 @@ public final class HerdrEventSubscription: @unchecked Sendable {
     }
 
     private func consumeLine(_ line: Data) {
+        HerdrTrace.log("event subscription line of \(line.count) bytes, acknowledged \(lock.withLock { acknowledged })")
         guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
             finish(HerdrRuntimeError.malformedResponse)
             return
@@ -184,6 +187,7 @@ public final class HerdrEventSubscription: @unchecked Sendable {
     }
 
     private func finish(_ error: Error?, notify: Bool = true) {
+        HerdrTrace.log("event subscription finishing (error: \(error.map { String(describing: $0) } ?? "none"), notify: \(notify))")
         let state = lock.withLock { () -> (FileHandle?, CheckedContinuation<Void, Error>?, (@Sendable (Error?) -> Void)?) in
             guard !stopped else { return (nil, nil, nil) }
             stopped = true
@@ -192,7 +196,14 @@ public final class HerdrEventSubscription: @unchecked Sendable {
             handle = nil; acknowledgement = nil; onEvent = nil; onClose = nil
             return state
         }
+        #if os(Windows)
+        // Interrupt the blocked read first, and close off this thread: closing a pipe handle while
+        // a synchronous read is still waiting on it would block the caller.
+        lock.withLock { windowsReader }?.cancel()
+        if let file = state.0 { DispatchQueue.global().async { try? file.close() } }
+        #else
         try? state.0?.close()
+        #endif
         if let waiter = state.1 { waiter.resume(throwing: error ?? HerdrRuntimeError.sessionNotRunning) }
         if notify { state.2?(error) }
     }

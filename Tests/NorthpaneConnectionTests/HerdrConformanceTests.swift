@@ -56,7 +56,11 @@ import NorthpaneSecurity
     print("[conformance] initial snapshot: \(initial.workspaces.count) workspaces, \(initial.panes.count) panes, incarnation \(initial.incarnationID)")
 
     // A Workspace with a shell, created through Herdr and seen again in the next snapshot.
-    let directory = URL(fileURLWithPath: homePath).appending(path: "conformance-\(UUID().uuidString.prefix(8))").path
+    // On a remote Host (a Windows one included) the directory is written in the Host's own form, which
+    // this machine's URL rules would mangle; NORTHPANE_CONFORMANCE_WORKDIR gives it verbatim.
+    let workspaceName = "conformance-\(UUID().uuidString.prefix(8))"
+    let directory = environment["NORTHPANE_CONFORMANCE_WORKDIR"].map { $0 + "/" + workspaceName }
+        ?? URL(fileURLWithPath: homePath).appending(path: workspaceName).path
     let created = try await client.createWorkspace(label: "Conformance", workingDirectory: directory)
     print("[conformance] created workspace \(created.workspaceID), root pane \(created.paneID)")
     #expect(!created.workspaceID.isEmpty && !created.paneID.isEmpty)
@@ -75,7 +79,7 @@ import NorthpaneSecurity
     #expect(after.workspaces.contains { $0.id == created.workspaceID })
     let pane = try #require(after.panes.first { $0.id == created.paneID })
     #expect(pane.workspaceID == created.workspaceID)
-    #expect(pane.cwd == directory || pane.cwd?.hasSuffix(URL(fileURLWithPath: directory).lastPathComponent) == true)
+    #expect(pane.cwd == directory || pane.cwd?.hasSuffix(workspaceName) == true)
 
     // Observe: a frame arrives. Control: what is typed comes back through the frame stream.
     let observeChannel = ChannelID()
