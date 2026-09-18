@@ -1089,12 +1089,18 @@ private actor BridgeHostContext {
         let arguments = (sessionName.map { ["--session", $0] } ?? []) + ["server"]
         let process = Process()
         #if os(Windows)
-        // A Windows Host reached over SSH kills everything the session started when it ends, and
-        // the Bridge is that session: a Herdr server started as its child dies with the connection
-        // and the next one finds nothing again (found live on 2026-09-18). `start` hands it to the
-        // shell, which leaves it running for the Operator's own sessions too.
-        process.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["ComSpec"] ?? #"C:\Windows\System32\cmd.exe"#)
-        process.arguments = ["/c", "start", "", "/b", executable.path] + arguments
+        // A Windows Host reached over SSH ends everything its session started, and the Bridge is
+        // that session: a Herdr server started as a child of it — directly, through `start`, or
+        // through Start-Process — dies with the connection, and the next connection finds no server
+        // again (measured on a real Windows Host on 2026-09-18). A process the WMI service creates
+        // belongs to no session and outlives it, which is what the Operator's own Herdr needs.
+        guard !executable.path.contains("'"), !executable.path.contains("\"") else {
+            throw HerdrRuntimeError.commandFailed("the path to herdr cannot be quoted safely")
+        }
+        let command = ([executable.path] + arguments).joined(separator: "\" \"")
+        process.executableURL = URL(fileURLWithPath: #"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"#)
+        process.arguments = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+            "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '\"\(command)\"' }; exit $r.ReturnValue"]
         #else
         process.executableURL = executable
         process.arguments = arguments
@@ -1103,7 +1109,14 @@ private actor BridgeHostContext {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
+        #if os(Windows)
+        // The server belongs to WMI now, not to this process: what ran here was the request.
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { throw HerdrRuntimeError.commandFailed("herdr server could not be started") }
+        herdrServerProcess = nil
+        #else
         herdrServerProcess = process
+        #endif
     }
 
     /// Lines Herdr is holding above a pane's viewport; zero when it holds none, and when Herdr has
