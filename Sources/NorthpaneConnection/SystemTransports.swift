@@ -202,8 +202,15 @@ public actor ProcessBridgeTransport: BridgeTransport {
         // Windows Host: the accented letter arrives as a replacement character). So the match is on
         // the plain-ASCII part of the message; 9009 is cmd's own "command not found". The Bridge may
         // be installed there perfectly well, so this asks for the Windows command, not for an install.
+        // cmd.exe answers a POSIX command either with "not recognized" or, once the command carries a
+        // path, with "cannot find the path specified" — in the Host's language and code page, so the
+        // match is on plain-ASCII fragments only (both seen on a real Windows Host). 9009 is cmd's
+        // own "command not found". The Bridge may be installed there perfectly well, so this asks
+        // for the Windows command rather than for an install.
         if exitCode == 9009 || detail.contains("is not recognized as an internal")
-            || detail.contains("riconosciuto come comando") || detail.contains("erkannt") {
+            || detail.contains("riconosciuto come comando") || detail.contains("erkannt")
+            || detail.contains("cannot find the path") || detail.contains("cannot find the file")
+            || detail.contains("trovare il percorso") || detail.contains("trovare il file") {
             return .remoteShellMismatch(.windows)
         }
         if exitCode == 126 || exitCode == 127

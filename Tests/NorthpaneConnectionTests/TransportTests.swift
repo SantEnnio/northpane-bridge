@@ -132,6 +132,9 @@ func sshThatNeverReachedTheHostReportsTheRouteProblemRatherThanAnExitCode(_ scen
     // must not depend on it (measured on a real Windows Host).
     ("'sh' non \u{FFFD} riconosciuto come comando interno o esterno,", Int32(1)),
     ("", Int32(9009)),
+    // With a path in the command, cmd says this instead (measured on a real Windows Host).
+    ("Impossibile trovare il percorso specificato.", Int32(1)),
+    ("The system cannot find the path specified.", Int32(1)),
 ])
 func cmdExeRefusingThePOSIXCommandAsksForTheWindowsOne(_ scenario: (String, Int32)) {
     let failure = ProcessBridgeTransport.classifyFailure(kind: .ssh, exitCode: scenario.1, errorData: Data(scenario.0.utf8))
