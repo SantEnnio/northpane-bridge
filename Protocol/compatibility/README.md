@@ -47,3 +47,9 @@ agent reads it from. A schema 11 Host has no such command; the Client refuses lo
 `bridge-v1-revision-12.proto` is the current schema. The compatibility gate
 checks the hashes of the prior revisions and exact generation of the current
 revision, while golden fixtures continue proving old frames decode.
+
+Revision 13 changes no message: it says the Bridge understands the
+`workspace:rename:<id>` mutation, which carries the new name in the
+`workspace_label` field revision 10 already added. A client that sees an
+older revision keeps renaming out of reach instead of having it refused.
+

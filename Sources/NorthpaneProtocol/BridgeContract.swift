@@ -6,7 +6,7 @@ public enum NorthpaneRelease {
 
 public enum BridgeProtocol {
     public static let major = 1
-    public static let schemaRevision = 12
+    public static let schemaRevision = 13
     public static let maximumFrameBytes = 1_048_576
 }
 

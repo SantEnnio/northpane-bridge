@@ -472,6 +472,43 @@ struct NorthpaneBridge {
                     }
                     break
                 }
+                if mutation.targetID.hasPrefix("workspace:rename:") {
+                    // The name is Herdr's own label, so every client sees it; renaming is a
+                    // controlled mutation like closing, and the Workspace must be one the client
+                    // is actually looking at.
+                    do {
+                        guard request.schemaRevision >= 13 else { throw Problem.incompatibleProtocol }
+                        guard mutation.capability == .terminalControl else { throw Problem.unauthorized }
+                        try await authority.authorize(deviceID: device, capability: .terminalControl)
+                        let workspaceID = String(mutation.targetID.dropFirst("workspace:rename:".count))
+                        guard workspaceID.range(of: #"^[A-Za-z0-9._:-]{1,128}$"#, options: .regularExpression) != nil,
+                              !mutation.workspaceLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                              mutation.workspaceLabel.count <= 128,
+                              !mutation.workspaceLabel.contains(where: \.isNewline)
+                        else { throw Problem.malformedFrame }
+                        guard await observation.snapshot?.workspaces.contains(where: { $0.id == workspaceID }) == true else {
+                            throw Problem(code: "workspace_not_found", locus: .herdr, retry: .afterRefresh,
+                                          recoveryAction: "refreshSnapshot", phase: .mutation)
+                        }
+                        try await context.renameWorkspace(workspaceID: workspaceID, label: mutation.workspaceLabel,
+                                                          sessionName: await observation.sessionName)
+                        try? await context.audit(deviceID: device, category: "workspace", reference: workspaceID,
+                                                 outcome: "applied", reason: "client-requested-rename")
+                        let receipt = WireMutationReceipt(commandID: mutation.commandID, outcome: .applied,
+                                                          workspaceID: workspaceID)
+                        await context.remember(receipt)
+                        responsePayload = .mutationReceipt(receipt)
+                    } catch let problem as Problem {
+                        responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .rejected,
+                                                                  problem: problem))
+                    } catch {
+                        let problem = Problem(code: "workspace_rename_failed", locus: .herdr, retry: .afterRefresh,
+                                              recoveryAction: "refreshWorkspaceAndRetry", phase: .mutation)
+                        responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied,
+                                                                  problem: problem))
+                    }
+                    break
+                }
                 if mutation.targetID.hasPrefix("workspace:close:") {
                     do {
                         guard request.schemaRevision >= 11 else { throw Problem.incompatibleProtocol }
@@ -1066,6 +1103,11 @@ private actor BridgeHostContext {
             return WorkspaceCreationResult(workspaceID: created.workspaceID, paneID: created.paneID,
                                            agentStarted: false, agentStartFailed: true)
         }
+    }
+
+    func renameWorkspace(workspaceID: String, label: String, sessionName: String?) async throws {
+        guard runtime != nil else { throw HerdrRuntimeError.executableUnavailable }
+        try await runtime!.renameWorkspace(workspaceID: workspaceID, label: label, sessionName: sessionName)
     }
 
     func closeWorkspace(workspaceID: String, sessionName: String?) async throws {

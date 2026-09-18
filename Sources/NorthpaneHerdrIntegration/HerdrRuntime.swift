@@ -186,6 +186,17 @@ public actor HerdrRuntime {
         _ = try await runner.run(arguments: arguments)
     }
 
+    /// Renames a Workspace in the session the client is observing. The name is Herdr's own label,
+    /// so every client sees it and it survives the Bridge; Herdr rejects an empty one.
+    public func renameWorkspace(workspaceID: String, label: String, sessionName: String? = nil) async throws {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains("\n") else { throw HerdrRuntimeError.commandFailed("a Workspace name cannot be empty") }
+        var arguments: [String] = []
+        if let sessionName, !sessionName.isEmpty { arguments += ["--session", sessionName] }
+        arguments += ["workspace", "rename", workspaceID, trimmed]
+        _ = try await runner.run(arguments: arguments)
+    }
+
     /// Lines Herdr is keeping above a pane's viewport, from the last snapshot it answered with.
     ///
     /// Zero means there is nothing up there to page, and that is the one thing worth knowing about

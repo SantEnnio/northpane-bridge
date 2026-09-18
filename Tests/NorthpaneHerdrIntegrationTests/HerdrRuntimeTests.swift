@@ -83,6 +83,22 @@ private let fullSnapshot = Data(#"{"id":"test","result":{"type":"session_snapsho
     #expect(await runner.capturedArguments() == [["--session", "default", "workspace", "close", "wB"]])
 }
 
+@Test func executableRuntimeRenamesAWorkspaceInTheObservedSession() async throws {
+    let runner = FixtureRunner([Data(#"{"id":"cli:workspace:rename","result":{"type":"ok"}}"#.utf8)])
+    let runtime = HerdrRuntime(runner: runner, incarnationID: "incarnation")
+
+    try await runtime.renameWorkspace(workspaceID: "wB", label: "  Preview  ", sessionName: "default")
+
+    // The name goes to Herdr trimmed, because Herdr shows it to everyone as given.
+    #expect(await runner.capturedArguments() == [["--session", "default", "workspace", "rename", "wB", "Preview"]])
+}
+
+@Test func aWorkspaceCannotBeRenamedToNothing() async throws {
+    let runtime = HerdrRuntime(runner: FixtureRunner([]), incarnationID: "incarnation")
+    await #expect(throws: HerdrRuntimeError.self) { try await runtime.renameWorkspace(workspaceID: "wB", label: "   ") }
+    await #expect(throws: HerdrRuntimeError.self) { try await runtime.renameWorkspace(workspaceID: "wB", label: "two\nlines") }
+}
+
 @Test func executableRuntimeLaunchesTheVerifiedAgentAndAcceptsBlockedReadiness() async throws {
     let response = Data(#"{"id":"cli:workspace:create","result":{"root_pane":{"pane_id":"wB:p1","workspace_id":"wB"},"type":"workspace_created","workspace":{"workspace_id":"wB"}}}"#.utf8)
     let runner = FixtureRunner([

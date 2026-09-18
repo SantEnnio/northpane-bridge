@@ -22,6 +22,9 @@ case " $* " in
       esac
     done
     ;;
+  *" workspace rename "*)
+    printf '%s\n' '{"id":"fixture-workspace-rename","result":{"type":"ok"}}'
+    ;;
   *" workspace close "*)
     printf '%s\n' '{"id":"fixture-workspace-close","result":{"type":"ok"}}'
     ;;

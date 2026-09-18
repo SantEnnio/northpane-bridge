@@ -383,6 +383,38 @@ public actor NorthpaneBridgeClient {
         }
     }
 
+    /// Renames a Workspace. The name is Herdr's own label, so it reaches every client and outlives
+    /// this connection; an empty one is refused here rather than on the Host.
+    public func renameWorkspace(workspaceID: String, label: String, deadline: Date = Date().addingTimeInterval(15)) async throws -> WireMutationReceipt {
+        guard let accepted, accepted.schemaRevision >= 13, accepted.capabilities.contains(.terminalControl) else {
+            throw Problem.incompatibleProtocol
+        }
+        let normalized = workspaceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.range(of: #"^[A-Za-z0-9._:-]{1,128}$"#, options: .regularExpression) != nil,
+              !name.isEmpty, name.count <= 128, !name.contains(where: \.isNewline)
+        else { throw Problem.malformedFrame }
+        let commandID = UUID()
+        let mutation = MutationRequest(
+            commandID: commandID,
+            clientDeviceID: deviceID,
+            capability: .terminalControl,
+            targetID: "workspace:rename:\(normalized)",
+            expectedRevision: 0,
+            deadline: deadline,
+            workspaceLabel: name
+        )
+        let response = try await request(.mutation(mutation))
+        switch response.payload {
+        case let .mutationReceipt(receipt) where receipt.commandID == commandID:
+            if receipt.outcome != .applied, let problem = receipt.problem { throw problem }
+            guard receipt.outcome == .applied, receipt.workspaceID == normalized else { throw Problem.malformedFrame }
+            return receipt
+        case let .problem(problem): throw problem
+        default: throw Problem.malformedFrame
+        }
+    }
+
     public func openResourceStream(_ command: ResourceCommand, channelID: ChannelID = ChannelID()) async throws -> (initial: ResourceResult, stream: AsyncThrowingStream<ResourceResult, Error>) {
         guard command.kind == .streamPreviewHTTP || command.kind == .openPreviewWebSocket else { throw Problem.malformedFrame }
         let queue = ResourceResultQueue(limit: 32)
