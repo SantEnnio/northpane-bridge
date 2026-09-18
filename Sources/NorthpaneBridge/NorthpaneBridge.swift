@@ -53,7 +53,7 @@ struct NorthpaneBridge {
                     try? await serve(transport, context: context)
                 }
             } catch {
-                FileHandle.standardError.write(Data("northpane-bridge: socket server failed\n".utf8))
+                FileHandle.standardError.write(Data(startupFailure(error).utf8))
                 Foundation.exit(1)
             }
             return
@@ -102,11 +102,33 @@ struct NorthpaneBridge {
             do { try await serveStandardIO() }
             catch SystemTransportError.endOfStream { return }
             catch {
-                FileHandle.standardError.write(Data("northpane-bridge: serve failed\n".utf8))
+                FileHandle.standardError.write(Data(startupFailure(error).utf8))
                 Foundation.exit(1)
             }
         default:
             print("Usage: northpane-bridge [--version | self-check --json | serve --stdio | serve --local-stdio | serve --socket PATH | serve --private ADDRESS PORT --certificate CERT.pem --key KEY.pem]")
+        }
+    }
+
+    /// Why the Bridge could not start, in a line the Operator can act on.
+    ///
+    /// The Host's identity key lives in the Keychain, which grants access by the signature of the
+    /// binary that stored it. A Bridge signed differently — the ad-hoc signed one from a release
+    /// replacing the Developer ID signed one the Mac app installs, say — is refused, and the Bridge
+    /// used to exit saying only "serve failed" (found live on 2026-09-18, after exactly that swap).
+    static func startupFailure(_ error: Error) -> String {
+        switch error {
+        case SecureMaterialError.notFound, SecureMaterialError.unavailable:
+            return """
+            northpane-bridge: this Host's identity key is kept in the Keychain and this binary cannot reach it (\(error)).
+            northpane-bridge: macOS grants Keychain access by code signature, so a Bridge from a release cannot use the identity
+            northpane-bridge: the Bridge installed by the Northpane app created, and the other way round. On a Mac, let the app
+            northpane-bridge: install the Bridge; to go back to the one that was here before:
+            northpane-bridge:   root=~/.local/share/northpane/bridge; ln -sfn "versions/$(basename "$(readlink $root/previous)")" $root/current
+
+            """
+        default:
+            return "northpane-bridge: serve failed: \(error)\n"
         }
     }
 

@@ -14,7 +14,8 @@
 #
 # Machine-readable lines on stdout start with "northpane-install ". Exit codes:
 #   2 usage, 20 no downloader, 21 download failed, 22 digest mismatch,
-#   23 self-check failed, 24 unsupported platform, 25 no digest tool
+#   23 self-check failed, 24 unsupported platform, 25 no digest tool,
+#   26 a Mac already served by the Northpane app's own Bridge (pass --replace-app-bridge to insist)
 set -eu
 
 repository="SantEnnio/northpane-bridge"
@@ -22,6 +23,7 @@ version=""
 expected=""
 url=""
 file=""
+replace_app_bridge=no
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -29,6 +31,7 @@ while [ "$#" -gt 0 ]; do
     --sha256) expected=${2:?}; shift 2 ;;
     --url) url=${2:?}; shift 2 ;;
     --file) file=${2:?}; shift 2 ;;
+    --replace-app-bridge) replace_app_bridge=yes; shift ;;
     *) echo "northpane-install: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -103,6 +106,13 @@ actual=$(digest "$work/$asset")
 [ "$actual" = "$expected" ] || fail 22 "digest mismatch: expected $expected, got $actual"
 
 root="$HOME/.local/share/northpane/bridge"
+# On a Mac the Host's identity key lives in the Keychain, which grants access by code signature: a
+# Bridge from a release cannot use the identity the Bridge the Northpane app installs created, so
+# replacing it silently takes the Host off the air (2026-09-18). The app keeps its own Bridge up to
+# date; this script steps aside unless it is told otherwise.
+if [ "$platform" = "macos-universal" ] && [ "$replace_app_bridge" = "no" ] && [ -e "$root/current" ]; then
+  fail 26 "this Mac already has a Bridge the Northpane app installed ($root/current). The app keeps it up to date; pass --replace-app-bridge to install this one anyway."
+fi
 target="$root/versions/$version"
 mkdir -p "$target" "$HOME/.local/bin"
 gzip -dc "$work/$asset" > "$target/northpane-bridge.partial"

@@ -43,12 +43,16 @@ public enum HostIdentityFile {
                 try write(.init(schemaVersion: 2, hostID: legacy.hostID, privateKeyReference: reference), to: fileURL)
                 return legacy
             }
+            // A Keychain that refuses this binary is not a corrupt file, and saying so sent a real
+            // Host down the wrong path (2026-09-18): that error keeps its own identity.
+            catch let error as SecureMaterialError { throw error }
             catch { throw HostIdentityFileError.corrupt }
         }
         let key = P256.Signing.PrivateKey()
         let record = StoredHostIdentity(hostID: HostID(), privateKey: key.rawRepresentation)
         let reference = reference(for: record.hostID)
         do { try await secureStore.store(record.privateKey, as: reference) }
+        catch let error as SecureMaterialError { throw error }
         catch { throw HostIdentityFileError.corrupt }
         try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try write(.init(schemaVersion: 2, hostID: record.hostID, privateKeyReference: reference), to: fileURL)

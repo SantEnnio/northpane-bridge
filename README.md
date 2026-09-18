@@ -38,7 +38,14 @@ version for rollback and links `~/.local/bin/northpane-bridge`.
 | --- | --- |
 | Linux x86_64 and arm64 | fully static (musl): no Swift runtime or particular glibc needed |
 | Windows x86_64 | executable with the Swift and Visual C++ runtime DLLs beside it |
-| macOS (universal) | ad-hoc signed; the Mac app sends its own Developer ID signed copy instead |
+| macOS (universal) | for a Mac the app does not manage; see below |
+
+On a Mac, let the Northpane app install the Bridge. The Host's identity key is kept in the
+Keychain, which grants access by code signature, so a Bridge from a release cannot use the identity
+the app's own signed Bridge created — the Host stops answering until the previous one is put back.
+`install.sh` refuses to replace an app-installed Bridge for that reason (`--replace-app-bridge`
+insists). The macOS package is for a Mac that is only ever a Host, with no Northpane app to keep
+its Bridge up to date.
 
 Herdr must be installed on the Host. The Bridge finds it in `~/.local/bin` (Herdr's
 installer), Homebrew, `/usr/local/bin`, `/usr/bin` or `PATH`, or wherever

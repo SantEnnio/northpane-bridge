@@ -24,7 +24,11 @@ lipo -create \
 mkdir -p "$output_directory"
 packaged="$output_directory/northpane-bridge-macos-universal"
 strip -x -o "$packaged" "$binary"
-codesign --force --sign - "$packaged"
+# The identifier is set here, not derived from the file's name: codesign takes it from the name
+# otherwise, and the Keychain keys access to the Host's identity by it. A binary packaged as
+# "northpane-bridge-macos-universal" and installed as "northpane-bridge" then cannot find the
+# identity the Host already has (found live on 2026-09-18, on a Mac mini that stopped answering).
+codesign --force --sign - --identifier northpane-bridge "$packaged"
 chmod 755 "$packaged"
 lipo -info "$packaged"
 lipo "$packaged" -verify_arch arm64 x86_64
