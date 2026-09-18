@@ -112,18 +112,26 @@ struct NorthpaneBridge {
 
     /// Why the Bridge could not start, in a line the Operator can act on.
     ///
-    /// The Host's identity key lives in the Keychain, which grants access by the signature of the
-    /// binary that stored it. A Bridge signed differently — the ad-hoc signed one from a release
-    /// replacing the Developer ID signed one the Mac app installs, say — is refused, and the Bridge
-    /// used to exit saying only "serve failed" (found live on 2026-09-18, after exactly that swap).
+    /// The Host's identity file names the key that proves this Host, and where that key lives
+    /// depends on how the Bridge was built: a development build keeps it in the state directory,
+    /// a release build in the Keychain. Swapping one for the other therefore leaves the identity
+    /// file pointing at a key the new binary cannot see, and the Bridge used to exit saying only
+    /// "serve failed" (found live on 2026-09-18, when a release Bridge replaced the development
+    /// one the Northpane app had installed on two Macs and both stopped answering).
     static func startupFailure(_ error: Error) -> String {
         switch error {
         case SecureMaterialError.notFound, SecureMaterialError.unavailable:
+            #if DEBUG
+            let here = "this build looks for it in NORTHPANE_STATE_DIRECTORY/secure-material (a development build)"
+            let other = "a release build keeps it in the Keychain"
+            #else
+            let here = "this build looks for it in the Keychain (a release build)"
+            let other = "a development build keeps it in NORTHPANE_STATE_DIRECTORY/secure-material"
+            #endif
             return """
-            northpane-bridge: this Host's identity key is kept in the Keychain and this binary cannot reach it (\(error)).
-            northpane-bridge: macOS grants Keychain access by code signature, so a Bridge from a release cannot use the identity
-            northpane-bridge: the Bridge installed by the Northpane app created, and the other way round. On a Mac, let the app
-            northpane-bridge: install the Bridge; to go back to the one that was here before:
+            northpane-bridge: this Host has an identity file, but its key is not where this binary looks (\(error)).
+            northpane-bridge: \(here); \(other). A Bridge of the other kind cannot use this Host's identity.
+            northpane-bridge: Put back the Bridge that was here before:
             northpane-bridge:   root=~/.local/share/northpane/bridge; ln -sfn "versions/$(basename "$(readlink $root/previous)")" $root/current
 
             """

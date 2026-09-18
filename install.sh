@@ -106,10 +106,11 @@ actual=$(digest "$work/$asset")
 [ "$actual" = "$expected" ] || fail 22 "digest mismatch: expected $expected, got $actual"
 
 root="$HOME/.local/share/northpane/bridge"
-# On a Mac the Host's identity key lives in the Keychain, which grants access by code signature: a
-# Bridge from a release cannot use the identity the Bridge the Northpane app installs created, so
-# replacing it silently takes the Host off the air (2026-09-18). The app keeps its own Bridge up to
-# date; this script steps aside unless it is told otherwise.
+# A Mac the Northpane app manages already has the Bridge the app installed, and that Bridge owns
+# this Host's identity: where the identity key is kept depends on how the Bridge was built (a
+# development build keeps it beside the state, a release build in the Keychain), so replacing one
+# with the other silently takes the Host off the air (2026-09-18, on two Macs at once). The app
+# keeps its own Bridge up to date; this script steps aside unless it is told otherwise.
 if [ "$platform" = "macos-universal" ] && [ "$replace_app_bridge" = "no" ] && [ -e "$root/current" ]; then
   fail 26 "this Mac already has a Bridge the Northpane app installed ($root/current). The app keeps it up to date; pass --replace-app-bridge to install this one anyway."
 fi
