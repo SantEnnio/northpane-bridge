@@ -1086,9 +1086,19 @@ private actor BridgeHostContext {
         }
         let executable = try herdrExecutable ?? HerdrProcessRunner().executableURL
         herdrExecutable = executable
+        let arguments = (sessionName.map { ["--session", $0] } ?? []) + ["server"]
         let process = Process()
+        #if os(Windows)
+        // A Windows Host reached over SSH kills everything the session started when it ends, and
+        // the Bridge is that session: a Herdr server started as its child dies with the connection
+        // and the next one finds nothing again (found live on 2026-09-18). `start` hands it to the
+        // shell, which leaves it running for the Operator's own sessions too.
+        process.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["ComSpec"] ?? #"C:\Windows\System32\cmd.exe"#)
+        process.arguments = ["/c", "start", "", "/b", executable.path] + arguments
+        #else
         process.executableURL = executable
-        process.arguments = (sessionName.map { ["--session", $0] } ?? []) + ["server"]
+        process.arguments = arguments
+        #endif
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
