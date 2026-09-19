@@ -1,12 +1,12 @@
 import Foundation
 
 public enum NorthpaneRelease {
-    public static let version = "1.0.2"
+    public static let version = "1.0.3"
 }
 
 public enum BridgeProtocol {
     public static let major = 1
-    public static let schemaRevision = 13
+    public static let schemaRevision = 14
     public static let maximumFrameBytes = 1_048_576
 }
 
@@ -17,6 +17,26 @@ public enum BridgeProtocol {
 /// passed, not that it looked fine.
 public enum HerdrCertifiedReleases {
     public static let versions: Set<String> = ["0.8.2", "0.9.0", "0.9.1"]
+}
+
+/// The platform a Bridge was built for, which is the platform the Host runs.
+///
+/// It is a fact of the binary, not something to discover: the Bridge answering a handshake was
+/// compiled for exactly one of these. A client reads it to know what it is talking to without
+/// opening a second SSH session to ask `uname`.
+public enum HostPlatform: String, Codable, Sendable, CaseIterable {
+    case macos, linux, windows
+
+    /// What this build runs on. Empty from nowhere: a Bridge always knows.
+    public static var current: HostPlatform {
+        #if os(macOS)
+        return .macos
+        #elseif os(Windows)
+        return .windows
+        #else
+        return .linux
+        #endif
+    }
 }
 
 public struct ConnectionID: RawRepresentable, Hashable, Codable, Sendable {
@@ -153,8 +173,14 @@ public struct HandshakeAccepted: Codable, Equatable, Sendable {
     /// so this is what tells them apart. Empty from a Bridge older than revision 9, which reads as
     /// "cannot tell" and never as "a different build".
     public let bridgeBuildID: String
-    public init(protocolMajor: Int, schemaRevision: Int, hostID: HostID, capabilities: Set<Capability>, bridgeVersion: String = "development", maximumFrameBytes: Int = BridgeProtocol.maximumFrameBytes, hostSigningPublicKey: Data = Data(), hostIdentitySignature: Data = Data(), herdrVersion: String = "unknown", bridgeBuildID: String = "") {
-        self.protocolMajor = protocolMajor; self.schemaRevision = schemaRevision; self.hostID = hostID; self.capabilities = capabilities; self.bridgeVersion = bridgeVersion; self.maximumFrameBytes = maximumFrameBytes; self.hostSigningPublicKey = hostSigningPublicKey; self.hostIdentitySignature = hostIdentitySignature; self.herdrVersion = herdrVersion; self.bridgeBuildID = bridgeBuildID
+    /// What the Host runs, as the Bridge itself knows it (revision 14): `macos`, `linux` or
+    /// `windows`. A client cannot learn this from anywhere else without opening a second SSH
+    /// session to ask `uname`, and it has to know — a macOS Host takes its Bridge from the signed
+    /// Mac app, the only copy its screen-recording permission is bound to. Empty from a Bridge
+    /// that predates revision 14, which reads as "cannot tell" and never as a platform.
+    public let hostPlatform: String
+    public init(protocolMajor: Int, schemaRevision: Int, hostID: HostID, capabilities: Set<Capability>, bridgeVersion: String = "development", maximumFrameBytes: Int = BridgeProtocol.maximumFrameBytes, hostSigningPublicKey: Data = Data(), hostIdentitySignature: Data = Data(), herdrVersion: String = "unknown", bridgeBuildID: String = "", hostPlatform: String = "") {
+        self.protocolMajor = protocolMajor; self.schemaRevision = schemaRevision; self.hostID = hostID; self.capabilities = capabilities; self.bridgeVersion = bridgeVersion; self.maximumFrameBytes = maximumFrameBytes; self.hostSigningPublicKey = hostSigningPublicKey; self.hostIdentitySignature = hostIdentitySignature; self.herdrVersion = herdrVersion; self.bridgeBuildID = bridgeBuildID; self.hostPlatform = hostPlatform
     }
 }
 

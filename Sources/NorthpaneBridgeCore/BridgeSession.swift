@@ -30,7 +30,7 @@ public actor BridgeSessionResponder {
             case let .success(base):
                 do {
                     let signature = try await authority.signHostIdentityChallenge(hello.hostIdentityChallenge)
-                    payload = .accepted(HandshakeAccepted(protocolMajor: base.protocolMajor, schemaRevision: base.schemaRevision, hostID: base.hostID, capabilities: base.capabilities, bridgeVersion: bridgeVersion, maximumFrameBytes: base.maximumFrameBytes, hostSigningPublicKey: authority.identity.signingPublicKey, hostIdentitySignature: signature, herdrVersion: herdrVersion, bridgeBuildID: bridgeBuildID))
+                    payload = .accepted(HandshakeAccepted(protocolMajor: base.protocolMajor, schemaRevision: base.schemaRevision, hostID: base.hostID, capabilities: base.capabilities, bridgeVersion: bridgeVersion, maximumFrameBytes: base.maximumFrameBytes, hostSigningPublicKey: authority.identity.signingPublicKey, hostIdentitySignature: signature, herdrVersion: herdrVersion, bridgeBuildID: bridgeBuildID, hostPlatform: HostPlatform.current.rawValue))
                 } catch {
                     payload = .problem(Problem(code: "identity_signing_failed", locus: .bridge, retry: .never, recoveryAction: "repairBridgeIdentity", phase: .trust))
                 }

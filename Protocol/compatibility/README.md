@@ -53,3 +53,13 @@ Revision 13 changes no message: it says the Bridge understands the
 `workspace_label` field revision 10 already added. A client that sees an
 older revision keeps renaming out of reach instead of having it refused.
 
+
+Revision 14 adds `host_platform` to `HandshakeAccepted`: the Bridge says what it
+runs on — `macos`, `linux` or `windows` — because it is the only party that
+knows without being asked. A client otherwise has to open a second SSH session
+and read `uname`, which iPhone and iPad pay for in a whole extra connection, and
+it needs the answer before offering anything: a macOS Host takes its Bridge from
+the signed Mac app, the only copy its screen-recording permission is bound to,
+so no other client should offer to send it one. A Bridge older than revision 14
+sends nothing, which reads as "cannot tell" and never as a platform; the client
+then behaves as it did before.

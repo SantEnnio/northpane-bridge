@@ -119,12 +119,13 @@ enum BridgeWireMapper {
         result.hostIdentitySignature = value.hostIdentitySignature
         result.herdrVersion = value.herdrVersion
         result.bridgeBuildID = value.bridgeBuildID
+        result.hostPlatform = value.hostPlatform
         return result
     }
 
     private static func decode(_ value: Northpane_Bridge_V1_HandshakeAccepted) throws -> HandshakeAccepted {
         guard let host = UUID(uuidString: value.hostID) else { throw Problem.malformedFrame }
-        return HandshakeAccepted(protocolMajor: try integer(value.protocolMajor), schemaRevision: try integer(value.schemaRevision), hostID: .init(rawValue: host), capabilities: Set(try value.capabilities.map(decode)), bridgeVersion: value.bridgeVersion, maximumFrameBytes: try integer(value.maximumFrameBytes), hostSigningPublicKey: value.hostSigningPublicKey, hostIdentitySignature: value.hostIdentitySignature, herdrVersion: value.herdrVersion, bridgeBuildID: value.bridgeBuildID)
+        return HandshakeAccepted(protocolMajor: try integer(value.protocolMajor), schemaRevision: try integer(value.schemaRevision), hostID: .init(rawValue: host), capabilities: Set(try value.capabilities.map(decode)), bridgeVersion: value.bridgeVersion, maximumFrameBytes: try integer(value.maximumFrameBytes), hostSigningPublicKey: value.hostSigningPublicKey, hostIdentitySignature: value.hostIdentitySignature, herdrVersion: value.herdrVersion, bridgeBuildID: value.bridgeBuildID, hostPlatform: value.hostPlatform)
     }
 
     private static func encode(_ value: Problem) -> Northpane_Bridge_V1_Problem {

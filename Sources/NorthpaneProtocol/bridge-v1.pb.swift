@@ -1306,6 +1306,14 @@ nonisolated struct Northpane_Bridge_V1_HandshakeAccepted: Sendable {
   /// Empty from a Bridge that predates revision 9.
   var bridgeBuildID: String = String()
 
+  /// What the Host runs, as the Bridge itself knows it: "macos", "linux" or "windows" (revision
+  /// 14). A client cannot tell from anywhere else without opening a second SSH session to ask
+  /// `uname`, and it needs to know: a macOS Host takes its Bridge from the signed Mac app, which
+  /// is the only copy its screen-recording permission is bound to, so no other client should
+  /// offer to send it one. Empty from a Bridge that predates revision 14, which reads as "cannot
+  /// tell" and never as a platform.
+  var hostPlatform: String = String()
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   init() {}
@@ -3048,7 +3056,7 @@ nonisolated extension Northpane_Bridge_V1_HandshakeHello: SwiftProtobuf.Message,
 
 nonisolated extension Northpane_Bridge_V1_HandshakeAccepted: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".HandshakeAccepted"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_major\0\u{3}schema_revision\0\u{3}host_id\0\u{1}capabilities\0\u{3}bridge_version\0\u{3}maximum_frame_bytes\0\u{3}host_signing_public_key\0\u{3}host_identity_signature\0\u{3}herdr_version\0\u{3}bridge_build_id\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_major\0\u{3}schema_revision\0\u{3}host_id\0\u{1}capabilities\0\u{3}bridge_version\0\u{3}maximum_frame_bytes\0\u{3}host_signing_public_key\0\u{3}host_identity_signature\0\u{3}herdr_version\0\u{3}bridge_build_id\0\u{3}host_platform\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3066,6 +3074,7 @@ nonisolated extension Northpane_Bridge_V1_HandshakeAccepted: SwiftProtobuf.Messa
       case 8: try { try decoder.decodeSingularBytesField(value: &self.hostIdentitySignature) }()
       case 9: try { try decoder.decodeSingularStringField(value: &self.herdrVersion) }()
       case 10: try { try decoder.decodeSingularStringField(value: &self.bridgeBuildID) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.hostPlatform) }()
       default: break
       }
     }
@@ -3102,6 +3111,9 @@ nonisolated extension Northpane_Bridge_V1_HandshakeAccepted: SwiftProtobuf.Messa
     if !self.bridgeBuildID.isEmpty {
       try visitor.visitSingularStringField(value: self.bridgeBuildID, fieldNumber: 10)
     }
+    if !self.hostPlatform.isEmpty {
+      try visitor.visitSingularStringField(value: self.hostPlatform, fieldNumber: 11)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3116,6 +3128,7 @@ nonisolated extension Northpane_Bridge_V1_HandshakeAccepted: SwiftProtobuf.Messa
     if lhs.hostIdentitySignature != rhs.hostIdentitySignature {return false}
     if lhs.herdrVersion != rhs.herdrVersion {return false}
     if lhs.bridgeBuildID != rhs.bridgeBuildID {return false}
+    if lhs.hostPlatform != rhs.hostPlatform {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
