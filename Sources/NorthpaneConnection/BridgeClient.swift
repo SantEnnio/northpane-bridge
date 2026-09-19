@@ -109,10 +109,17 @@ public actor NorthpaneBridgeClient {
         self.transport = transport; self.deviceID = deviceID; self.connectionID = connectionID; self.controlChannelID = controlChannelID
     }
 
+    /// The oldest Bridge this client still talks to. Revisions 15 and 16 only added commands, each
+    /// refused locally when the Host is older, so a Host on 14 loses those two commands and
+    /// nothing else; refusing it outright would have put every Host out of reach the day two
+    /// revisions shipped together. Raise this when a revision changes what an existing message
+    /// means, not merely because the number moved.
+    public static let oldestSchemaRevisionSpoken = 14
+
     @discardableResult
     public func handshake(expectedHostFingerprint: String? = nil, clientVersion: String = "development") async throws -> HandshakeAccepted {
         let challenge = Data((0..<32).map { _ in UInt8.random(in: .min ... .max) })
-        let hello = HandshakeHello(protocolRange: .init(minimum: 1, maximum: BridgeProtocol.major), schemaRange: .init(minimum: max(1, BridgeProtocol.schemaRevision - 1), maximum: BridgeProtocol.schemaRevision), clientDeviceID: deviceID, clientVersion: clientVersion, hostIdentityChallenge: challenge, expectedHostFingerprint: expectedHostFingerprint)
+        let hello = HandshakeHello(protocolRange: .init(minimum: 1, maximum: BridgeProtocol.major), schemaRange: .init(minimum: Self.oldestSchemaRevisionSpoken, maximum: BridgeProtocol.schemaRevision), clientDeviceID: deviceID, clientVersion: clientVersion, hostIdentityChallenge: challenge, expectedHostFingerprint: expectedHostFingerprint)
         let response = try await request(.hello(hello))
         switch response.payload {
         case let .accepted(accepted):
