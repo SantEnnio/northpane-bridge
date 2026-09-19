@@ -2,8 +2,9 @@
 set -eu
 
 # Builds the macOS Bridge as one universal (arm64 + x86_64) executable, stripped and gzipped.
-# The linker signs it ad hoc, which is all a binary fetched with curl needs to run; the Mac app
-# keeps sending its own Developer ID signed copy, which screen capture permissions depend on.
+# It is signed ad hoc, which is all a binary fetched with curl needs to run. Nothing a Host keeps
+# depends on the signature: its identity is in a file, and screen recording is granted to the
+# frozen helper bundle the Bridge installs once, not to the Bridge.
 #
 #   Scripts/package-macos.sh [output-directory]
 repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -24,10 +25,8 @@ lipo -create \
 mkdir -p "$output_directory"
 packaged="$output_directory/northpane-bridge-macos-universal"
 strip -x -o "$packaged" "$binary"
-# The identifier is set here, not derived from the file's name: codesign takes it from the name
-# otherwise, and the Keychain keys access to the Host's identity by it. A binary packaged as
-# "northpane-bridge-macos-universal" and installed as "northpane-bridge" then cannot find the
-# identity the Host already has (found live on 2026-09-18, on a Mac mini that stopped answering).
+# The identifier is set here, not derived from the file's name, so every release signs as the
+# same "northpane-bridge" whatever the package is called.
 codesign --force --sign - --identifier northpane-bridge "$packaged"
 chmod 755 "$packaged"
 lipo -info "$packaged"

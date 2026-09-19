@@ -112,27 +112,23 @@ struct NorthpaneBridge {
 
     /// Why the Bridge could not start, in a line the Operator can act on.
     ///
-    /// The Host's identity file names the key that proves this Host, and where that key lives
-    /// depends on how the Bridge was built: a development build keeps it in the state directory,
-    /// a release build in the Keychain. Swapping one for the other therefore leaves the identity
-    /// file pointing at a key the new binary cannot see, and the Bridge used to exit saying only
-    /// "serve failed" (found live on 2026-09-18, when a release Bridge replaced the development
-    /// one the Northpane app had installed on two Macs and both stopped answering).
+    /// The Host's identity file names the key that proves this Host. Every build looks for that key
+    /// in every place one was ever kept (`HostIdentityKeyStore`), so what is left to fail is a key
+    /// that is gone, or a Mac's Keychain holding the key of an old release Bridge and refusing this
+    /// one — it would ask the screen, and a Bridge started over SSH has none.
     static func startupFailure(_ error: Error) -> String {
         switch error {
-        case SecureMaterialError.notFound, SecureMaterialError.unavailable:
-            #if DEBUG
-            let here = "this build looks for it in NORTHPANE_STATE_DIRECTORY/secure-material (a development build)"
-            let other = "a release build keeps it in the Keychain"
-            #else
-            let here = "this build looks for it in the Keychain (a release build)"
-            let other = "a development build keeps it in NORTHPANE_STATE_DIRECTORY/secure-material"
-            #endif
+        case SecureMaterialError.notFound:
             return """
-            northpane-bridge: this Host has an identity file, but its key is not where this binary looks (\(error)).
-            northpane-bridge: \(here); \(other). A Bridge of the other kind cannot use this Host's identity.
-            northpane-bridge: Put back the Bridge that was here before:
-            northpane-bridge:   root=~/.local/share/northpane/bridge; ln -sfn "versions/$(basename "$(readlink $root/previous)")" $root/current
+            northpane-bridge: this Host has an identity file, but the key it names is in none of the places a Bridge keeps one (\(error)).
+            northpane-bridge: Without that key this Host cannot prove it is the one its devices paired with.
+
+            """
+        case SecureMaterialError.unavailable:
+            return """
+            northpane-bridge: this Host's identity key is held by a store that refuses this Bridge (\(error)).
+            northpane-bridge: On a Mac that is the Keychain entry an earlier release Bridge made. Start Northpane on this Mac once, at its
+            northpane-bridge: screen, and allow the access it asks for: the key is then copied beside the state and no Bridge asks again.
 
             """
         default:
@@ -1008,13 +1004,7 @@ private actor BridgeHostContext {
         let stateDirectory = environment["NORTHPANE_STATE_DIRECTORY"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".northpane", directoryHint: .isDirectory)
         self.stateDirectory = stateDirectory
-        #if DEBUG
-        let identityStore: any SecureMaterialStore = try DevelopmentFileSecureMaterialStore(
-            directory: stateDirectory.appending(path: "secure-material/host-identity", directoryHint: .isDirectory)
-        )
-        #else
-        let identityStore: any SecureMaterialStore = KeychainSecureMaterialStore(service: "it.ambiens.northpane.host-identity")
-        #endif
+        let identityStore = try HostIdentityKeyStore.standard(stateDirectory: stateDirectory)
         let stored = try await HostIdentityFile.loadOrCreate(
             at: stateDirectory.appending(path: "host-identity.json"),
             secureStore: identityStore

@@ -14,8 +14,8 @@
 #
 # Machine-readable lines on stdout start with "northpane-install ". Exit codes:
 #   2 usage, 20 no downloader, 21 download failed, 22 digest mismatch,
-#   23 self-check failed, 24 unsupported platform, 25 no digest tool,
-#   26 a Mac already served by the Northpane app's own Bridge (pass --replace-app-bridge to insist)
+#   23 self-check failed, 24 unsupported platform, 25 no digest tool
+#   (26 was, until 1.0.3, a Mac whose Bridge the Northpane app had installed; nothing returns it now)
 set -eu
 
 repository="SantEnnio/northpane-bridge"
@@ -23,7 +23,6 @@ version=""
 expected=""
 url=""
 file=""
-replace_app_bridge=no
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -31,7 +30,7 @@ while [ "$#" -gt 0 ]; do
     --sha256) expected=${2:?}; shift 2 ;;
     --url) url=${2:?}; shift 2 ;;
     --file) file=${2:?}; shift 2 ;;
-    --replace-app-bridge) replace_app_bridge=yes; shift ;;
+    --replace-app-bridge) shift ;; # accepted and ignored: it overrode a refusal that is gone
     *) echo "northpane-install: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -106,14 +105,6 @@ actual=$(digest "$work/$asset")
 [ "$actual" = "$expected" ] || fail 22 "digest mismatch: expected $expected, got $actual"
 
 root="$HOME/.local/share/northpane/bridge"
-# A Mac the Northpane app manages already has the Bridge the app installed, and that Bridge owns
-# this Host's identity: where the identity key is kept depends on how the Bridge was built (a
-# development build keeps it beside the state, a release build in the Keychain), so replacing one
-# with the other silently takes the Host off the air (2026-09-18, on two Macs at once). The app
-# keeps its own Bridge up to date; this script steps aside unless it is told otherwise.
-if [ "$platform" = "macos-universal" ] && [ "$replace_app_bridge" = "no" ] && [ -e "$root/current" ]; then
-  fail 26 "this Mac already has a Bridge the Northpane app installed ($root/current). The app keeps it up to date; pass --replace-app-bridge to install this one anyway."
-fi
 target="$root/versions/$version"
 mkdir -p "$target" "$HOME/.local/bin"
 gzip -dc "$work/$asset" > "$target/northpane-bridge.partial"

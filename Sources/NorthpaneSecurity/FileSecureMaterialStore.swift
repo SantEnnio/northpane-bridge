@@ -1,4 +1,3 @@
-#if DEBUG
 import Foundation
 #if canImport(CryptoKit)
 import CryptoKit
@@ -7,9 +6,14 @@ import Crypto
 #endif
 import NorthpaneProtocol
 
-/// A development-only secure-material store for ad-hoc builds whose changing
-/// code signature cannot retain Keychain ACL access between rebuilds.
-public actor DevelopmentFileSecureMaterialStore: SecureMaterialStore {
+/// Secure material kept in files only their owner can read, the way `sshd` keeps a host key.
+///
+/// This is where a Host's identity lives, on every platform and in every build. A Bridge is a
+/// command started over SSH and replaced by a download: on a Mac its ad-hoc signature changes with
+/// every version, and the Keychain answers a changed signature by asking the screen — which an SSH
+/// session does not have — so an identity kept there is lost at the first update. A file does not
+/// care which binary reads it, how it was built or signed, or whether anyone is logged in.
+public actor FileSecureMaterialStore: SecureMaterialStore {
     private let directory: URL
 
     public init(directory: URL) throws {
@@ -54,4 +58,3 @@ public actor DevelopmentFileSecureMaterialStore: SecureMaterialStore {
         return directory.appending(path: digest)
     }
 }
-#endif

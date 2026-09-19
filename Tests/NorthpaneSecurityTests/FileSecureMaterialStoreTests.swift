@@ -1,16 +1,15 @@
-#if DEBUG
 import Foundation
 import NorthpaneProtocol
 import Testing
 @testable import NorthpaneSecurity
 
-@Test func developmentFileSecureMaterialStorePersistsPrivateOpaqueReferences() async throws {
+@Test func fileSecureMaterialStorePersistsPrivateOpaqueReferences() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appending(path: "northpane-development-material-\(UUID().uuidString)", directoryHint: .isDirectory)
+        .appending(path: "northpane-file-material-\(UUID().uuidString)", directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let store = try DevelopmentFileSecureMaterialStore(directory: directory)
+    let store = try FileSecureMaterialStore(directory: directory)
     let reference = CredentialReference(rawValue: "private-reference")
-    let material = Data("development-secret".utf8)
+    let material = Data("file-secret".utf8)
 
     try await store.store(material, as: reference)
     #expect(try await store.load(reference) == material)
@@ -26,4 +25,3 @@ import Testing
         try await store.load(reference)
     }
 }
-#endif
