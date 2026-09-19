@@ -116,6 +116,18 @@ import NorthpaneSecurity
     try await client.release(.init(attachmentID: controlled.attachmentID), channelID: controlChannel)
 
     // Close what was created; the Workspace must be gone from the next snapshot.
+    // A second Pane in that Workspace (revision 15): Herdr opens it as a tab of its own, and the
+    // next snapshot shows it beside the first, in the Workspace's directory.
+    let second = try await client.createPane(workspaceID: created.workspaceID)
+    print("[conformance] created a second pane \(second.paneID) in \(second.workspaceID)")
+    #expect(second.paneID != created.paneID)
+    try await Task.sleep(for: .milliseconds(500))
+    let withSecond = try await client.observe(sessionName: session)
+    let newPane = withSecond.panes.first { $0.id == second.paneID }
+    #expect(newPane?.workspaceID == created.workspaceID)
+    #expect(newPane?.tabID != pane.tabID)
+    print("[conformance] the second pane is in tab \(newPane?.tabID ?? "?"), cwd \(newPane?.cwd ?? "?")")
+
     let closed = try await client.closeWorkspace(workspaceID: created.workspaceID)
     #expect(closed.outcome == .applied)
     try await Task.sleep(for: .seconds(1))

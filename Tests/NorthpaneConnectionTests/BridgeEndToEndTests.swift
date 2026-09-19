@@ -77,6 +77,15 @@ import Testing
     #expect(created.paneID == "workspace-created:p1")
     #expect(FileManager.default.fileExists(atPath: workspaceDirectory))
 
+    // A new Pane in the Workspace being observed: a tab of its own, with an agent when asked.
+    let pane = try await client.createPane(workspaceID: "workspace-1")
+    #expect(pane.workspaceID == "workspace-1")
+    #expect(pane.paneID == "tab-created:p1")
+    let agentPane = try await client.createPane(workspaceID: "workspace-1", agentKind: .codex)
+    #expect(agentPane.workspaceAgentStarted)
+    // A Workspace the client is not looking at is not a place to open one.
+    await #expect(throws: Problem.self) { try await client.createPane(workspaceID: "workspace-unknown") }
+
     let closed = try await client.closeWorkspace(workspaceID: "workspace-1")
     #expect(closed.outcome == .applied)
     #expect(closed.workspaceID == "workspace-1")

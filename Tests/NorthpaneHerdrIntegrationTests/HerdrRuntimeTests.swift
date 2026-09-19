@@ -93,6 +93,23 @@ private let fullSnapshot = Data(#"{"id":"test","result":{"type":"session_snapsho
     #expect(await runner.capturedArguments() == [["--session", "default", "workspace", "rename", "wB", "Preview"]])
 }
 
+@Test func executableRuntimeOpensANewTabInAWorkspaceWithoutTakingTheFocus() async throws {
+    let runner = FixtureRunner([Data(#"{"id":"cli:tab:create","result":{"type":"tab_created","tab":{"tab_id":"wB:t2","workspace_id":"wB"},"root_pane":{"pane_id":"wB:p7","workspace_id":"wB","tab_id":"wB:t2"}}}"#.utf8)])
+    let runtime = HerdrRuntime(runner: runner, incarnationID: "incarnation")
+
+    let created = try await runtime.createTab(workspaceID: "wB", workingDirectory: "/private/tmp/project", sessionName: "default")
+
+    #expect(created.paneID == "wB:p7")
+    // No `--focus`: whoever sits at the Host stays where they are.
+    #expect(await runner.capturedArguments() == [["--session", "default", "tab", "create", "--workspace", "wB", "--cwd", "/private/tmp/project"]])
+}
+
+@Test func aTabThatHerdrSaysBelongsToAnotherWorkspaceIsNotAccepted() async throws {
+    let runner = FixtureRunner([Data(#"{"result":{"type":"tab_created","root_pane":{"pane_id":"wC:p1","workspace_id":"wC"}}}"#.utf8)])
+    let runtime = HerdrRuntime(runner: runner, incarnationID: "incarnation")
+    await #expect(throws: HerdrRuntimeError.self) { try await runtime.createTab(workspaceID: "wB", workingDirectory: "/private/tmp") }
+}
+
 @Test func aWorkspaceCannotBeRenamedToNothing() async throws {
     let runtime = HerdrRuntime(runner: FixtureRunner([]), incarnationID: "incarnation")
     await #expect(throws: HerdrRuntimeError.self) { try await runtime.renameWorkspace(workspaceID: "wB", label: "   ") }

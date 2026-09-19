@@ -1,12 +1,12 @@
 import Foundation
 
 public enum NorthpaneRelease {
-    public static let version = "1.0.4"
+    public static let version = "1.0.5"
 }
 
 public enum BridgeProtocol {
     public static let major = 1
-    public static let schemaRevision = 14
+    public static let schemaRevision = 15
     public static let maximumFrameBytes = 1_048_576
 }
 

@@ -176,6 +176,23 @@ public actor HerdrRuntime {
         }
     }
 
+    /// Opens a new tab in a Workspace that exists, and answers with the Pane it starts with.
+    ///
+    /// A tab rather than a split: the new Pane gets the whole area, which is what a client showing
+    /// one Pane at a time wants, and nothing already running on the Host is made smaller. Herdr
+    /// focuses a new tab only when asked to, so whoever sits at the Host is not moved.
+    public func createTab(workspaceID: String, workingDirectory: String, sessionName: String? = nil) async throws -> CreatedWorkspace {
+        var arguments: [String] = []
+        if let sessionName, !sessionName.isEmpty { arguments += ["--session", sessionName] }
+        arguments += ["tab", "create", "--workspace", workspaceID, "--cwd", workingDirectory]
+        let data = try await runner.run(arguments: arguments)
+        guard let response = try? JSONDecoder().decode(TabCreateResponse.self, from: data),
+              response.result.type == "tab_created", !response.result.rootPane.paneID.isEmpty,
+              response.result.rootPane.workspaceID == workspaceID
+        else { throw HerdrRuntimeError.malformedResponse }
+        return CreatedWorkspace(workspaceID: workspaceID, paneID: response.result.rootPane.paneID)
+    }
+
     /// Closes the Workspace in the same Herdr session the client is observing. Herdr owns the
     /// lifecycle: closing the Workspace terminates its panes and foreground processes, but it does
     /// not remove the working directories or files those processes used.
@@ -319,6 +336,20 @@ private struct WorkspaceCreateResponse: Decodable {
         let workspace: Workspace
         let rootPane: RootPane
         enum CodingKeys: String, CodingKey { case type, workspace, rootPane = "root_pane" }
+    }
+    let result: Result
+}
+
+private struct TabCreateResponse: Decodable {
+    struct Result: Decodable {
+        struct RootPane: Decodable {
+            let paneID: String
+            let workspaceID: String
+            enum CodingKeys: String, CodingKey { case paneID = "pane_id", workspaceID = "workspace_id" }
+        }
+        let type: String
+        let rootPane: RootPane
+        enum CodingKeys: String, CodingKey { case type, rootPane = "root_pane" }
     }
     let result: Result
 }

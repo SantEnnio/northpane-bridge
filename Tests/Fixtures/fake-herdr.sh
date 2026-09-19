@@ -28,6 +28,9 @@ case " $* " in
   *" workspace close "*)
     printf '%s\n' '{"id":"fixture-workspace-close","result":{"type":"ok"}}'
     ;;
+  *" tab create "*)
+    printf '%s\n' '{"id":"fixture-tab-create","result":{"type":"tab_created","tab":{"tab_id":"tab-created","workspace_id":"workspace-1"},"root_pane":{"pane_id":"tab-created:p1","workspace_id":"workspace-1","tab_id":"tab-created"}}}'
+    ;;
   *" workspace create "*)
     printf '%s\n' '{"id":"fixture-workspace-create","result":{"root_pane":{"pane_id":"workspace-created:p1","workspace_id":"workspace-created"},"type":"workspace_created","workspace":{"workspace_id":"workspace-created"}}}'
     ;;

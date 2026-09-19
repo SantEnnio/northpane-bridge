@@ -468,6 +468,64 @@ struct NorthpaneBridge {
                     }
                     break
                 }
+                if mutation.targetID.hasPrefix("pane:create:") {
+                    // A new Pane in a Workspace the client is looking at: the same authority and
+                    // the same agent choice as a new Workspace, in the directory the Workspace
+                    // already works in unless the client names another.
+                    do {
+                        guard request.schemaRevision >= 15 else { throw Problem.incompatibleProtocol }
+                        guard mutation.capability == .terminalControl else { throw Problem.unauthorized }
+                        try await authority.authorize(deviceID: device, capability: .terminalControl)
+                        let workspaceID = String(mutation.targetID.dropFirst("pane:create:".count))
+                        let requested = mutation.workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard workspaceID.range(of: #"^[A-Za-z0-9._:-]{1,128}$"#, options: .regularExpression) != nil,
+                              requested.isEmpty || ((requested as NSString).isAbsolutePath && requested.count <= 1_024
+                                                    && !requested.contains(where: { $0.isNewline || $0 == "\0" }))
+                        else { throw Problem.malformedFrame }
+                        let snapshot = await observation.snapshot
+                        guard let workspace = snapshot?.workspaces.first(where: { $0.id == workspaceID }) else {
+                            throw Problem(code: "workspace_not_found", locus: .herdr, retry: .afterRefresh,
+                                          recoveryAction: "refreshSnapshot", phase: .mutation)
+                        }
+                        // Where the Workspace works: its worktree, else where one of its Panes
+                        // is, else the home directory. The first of them that is still there —
+                        // a worktree can be removed while the Workspace that named it stays open.
+                        let candidates = [workspace.worktreePath].compactMap { $0 }
+                            + (snapshot?.panes.filter { $0.workspaceID == workspaceID }.compactMap(\.cwd) ?? [])
+                            + [FileManager.default.homeDirectoryForCurrentUser.path]
+                        let directory = !requested.isEmpty ? requested : candidates.first { path in
+                            var isDirectory: ObjCBool = false
+                            return !path.isEmpty && FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+                        } ?? FileManager.default.homeDirectoryForCurrentUser.path
+                        let created = try await context.createPane(workspaceID: workspaceID, workingDirectory: directory,
+                                                                   agentKind: mutation.workspaceAgentKind,
+                                                                   sessionName: await observation.sessionName)
+                        try? await context.audit(deviceID: device, category: "pane", reference: created.paneID,
+                                                 outcome: "applied", reason: created.agentStartFailed ? "client-requested-create-agent-failed" : "client-requested-create")
+                        let launchProblem = created.agentStartFailed
+                            ? Problem(code: "workspace_agent_start_failed", locus: .herdr, retry: .afterUserAction,
+                                      recoveryAction: "openWorkspaceAndStartAgent", phase: .mutation)
+                            : nil
+                        let receipt = WireMutationReceipt(commandID: mutation.commandID, outcome: .applied,
+                                                          problem: launchProblem, workspaceID: workspaceID, paneID: created.paneID,
+                                                          workspaceAgentKind: mutation.workspaceAgentKind,
+                                                          workspaceAgentStarted: created.agentStarted)
+                        await context.remember(receipt)
+                        responsePayload = .mutationReceipt(receipt)
+                    } catch let problem as Problem {
+                        responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .rejected, problem: problem))
+                    } catch AgentExecutableResolutionError.unavailable {
+                        let problem = Problem(code: "workspace_agent_unavailable", locus: .herdr, retry: .afterUserAction,
+                                              recoveryAction: "installAgentOrChooseShell", phase: .mutation)
+                        responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied, problem: problem,
+                                                                 workspaceAgentKind: mutation.workspaceAgentKind))
+                    } catch {
+                        let problem = Problem(code: "pane_create_failed", locus: .herdr, retry: .afterRefresh,
+                                              recoveryAction: "refreshWorkspaceAndRetry", phase: .mutation)
+                        responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied, problem: problem))
+                    }
+                    break
+                }
                 if mutation.targetID.hasPrefix("workspace:rename:") {
                     // The name is Herdr's own label, so every client sees it; renaming is a
                     // controlled mutation like closing, and the Workspace must be one the client
@@ -1092,6 +1150,40 @@ private actor BridgeHostContext {
         } catch {
             return WorkspaceCreationResult(workspaceID: created.workspaceID, paneID: created.paneID,
                                            agentStarted: false, agentStartFailed: true)
+        }
+    }
+
+    /// A new Pane in a Workspace that exists, with the same choice of what runs in it as a new
+    /// Workspace has. Unlike a new Workspace it never makes a directory: the Pane opens where the
+    /// Workspace already is.
+    func createPane(workspaceID: String, workingDirectory: String, agentKind: WorkspaceAgentKind, sessionName: String?) async throws -> WorkspaceCreationResult {
+        let resolver = AgentExecutableResolver()
+        let detected: DetectedAgentExecutable? = if agentKind == .shell {
+            nil
+        } else {
+            try await Task.detached(priority: .userInitiated) { try resolver.resolve(agentKind) }.value
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: workingDirectory, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw HerdrRuntimeError.commandFailed("the Workspace's directory is not there")
+        }
+        if runtime == nil {
+            let runner = try HerdrProcessRunner()
+            herdrExecutable = runner.executableURL
+            runtime = HerdrRuntime(runner: runner)
+        }
+        let created = try await runtime!.createTab(workspaceID: workspaceID, workingDirectory: workingDirectory, sessionName: sessionName)
+        guard agentKind != .shell else {
+            return WorkspaceCreationResult(workspaceID: workspaceID, paneID: created.paneID, agentStarted: false, agentStartFailed: false)
+        }
+        do {
+            // Named after the Pane, not the Workspace: a Workspace can now hold several agents.
+            try await runtime!.startAgent(agentKind, executableURL: detected!.url,
+                                          name: HerdrAgentNaming.name(workspaceID: created.paneID),
+                                          paneID: created.paneID, sessionName: sessionName)
+            return WorkspaceCreationResult(workspaceID: workspaceID, paneID: created.paneID, agentStarted: true, agentStartFailed: false)
+        } catch {
+            return WorkspaceCreationResult(workspaceID: workspaceID, paneID: created.paneID, agentStarted: false, agentStartFailed: true)
         }
     }
 

@@ -63,3 +63,11 @@ the signed Mac app, the only copy its screen-recording permission is bound to,
 so no other client should offer to send it one. A Bridge older than revision 14
 sends nothing, which reads as "cannot tell" and never as a platform; the client
 then behaves as it did before.
+
+Revision 15 changes no message: it says the Bridge understands the
+`pane:create:<workspace_id>` mutation, which opens a new tab with one Pane in a
+Workspace that already exists. It reuses `working_directory` (optional here: the
+Bridge falls back on the Workspace's own directory) and `workspace_agent_kind`
+from revisions 10 and 11, and answers with the same `workspace_id`, `pane_id`
+and agent fields as `workspace:create`. A client that sees an older revision
+keeps the action out of reach instead of having it refused.
