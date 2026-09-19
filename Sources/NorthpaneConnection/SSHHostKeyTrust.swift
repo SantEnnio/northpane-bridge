@@ -118,6 +118,15 @@ public struct SSHHostKeyTrust: Sendable {
     /// 192.168.1.20`) is what `known_hosts` and the key scan must be asked about, not the alias,
     /// which resolves nowhere on its own. Falls back to the endpoint's host part and port 22.
     public func resolve(endpoint: String) async -> (host: String, port: Int) {
+        let destination = await resolveDestination(endpoint: endpoint)
+        return (destination.host, destination.port)
+    }
+
+    /// The same, with the account `ssh` would log in as: the one on the endpoint, else the `User`
+    /// the configuration sets for an alias. Nil when neither names one and `ssh` would fall back
+    /// on the local user. What another device needs in order to dial the same Host, since it has
+    /// neither this Mac's `ssh_config` nor its user name.
+    public func resolveDestination(endpoint: String) async -> (user: String?, host: String, port: Int) {
         // `ssh` takes no `host:port`; the port travels as `-p` and the user stays on the name.
         let trimmed = endpoint.trimmingCharacters(in: .whitespaces)
         let fallbackHost = TailnetAddress.host(inEndpoint: trimmed)
@@ -129,21 +138,26 @@ public struct SSHHostKeyTrust: Sendable {
             fallbackPort = explicitPort ?? 22
             destination = String(trimmed[..<colon])
         }
-        guard Self.isPlausibleHost(fallbackHost) else { return (fallbackHost, fallbackPort) }
+        let named = trimmed.firstIndex(of: "@").map { String(trimmed[..<$0]) }.flatMap { $0.isEmpty ? nil : $0 }
+        guard Self.isPlausibleHost(fallbackHost) else { return (named, fallbackHost, fallbackPort) }
         // Only an explicit port goes on the command line: there it would override the one the
         // configuration sets for the alias.
         var arguments = ["-G"] + (explicitPort.map { ["-p", String($0)] } ?? [])
         if let sshConfigFile { arguments += ["-F", sshConfigFile.path] }
         let result = await Self.run(sshExecutable, arguments + [destination])
-        guard result.status == 0 else { return (fallbackHost, fallbackPort) }
-        var host = fallbackHost, port = fallbackPort
+        guard result.status == 0 else { return (named, fallbackHost, fallbackPort) }
+        var host = fallbackHost, port = fallbackPort, configured: String?
         for line in String(decoding: result.output, as: UTF8.self).split(whereSeparator: \.isNewline) {
             let parts = line.split(separator: " ", maxSplits: 1)
             guard parts.count == 2 else { continue }
             if parts[0] == "hostname", Self.isPlausibleHost(String(parts[1])) { host = String(parts[1]) }
             if parts[0] == "port", let value = Int(parts[1]) { port = value }
+            if parts[0] == "user" { configured = String(parts[1]) }
         }
-        return (host, port)
+        // `ssh -G` always prints a user, the local one when nothing sets it: only a name the
+        // endpoint or the configuration chose is worth passing on.
+        let account = named ?? configured.flatMap { $0 == NSUserName() ? nil : $0 }
+        return (account, host, port)
     }
 
     /// Whether `known_hosts` already carries a key for the Host, hashed entries included.
@@ -151,6 +165,16 @@ public struct SSHHostKeyTrust: Sendable {
         guard Self.isPlausibleHost(host), FileManager.default.fileExists(atPath: knownHostsFile.path) else { return false }
         let result = await Self.run(keygenExecutable, ["-F", SSHHostKeys.hostPattern(host: host, port: port), "-f", knownHostsFile.path])
         return result.status == 0 && !result.output.isEmpty
+    }
+
+    /// The keys `known_hosts` already holds for the Host, the type `ssh` prefers first: what this
+    /// Mac has agreed to trust, as opposed to what the network presents right now. It is what one
+    /// of the Operator's devices can vouch for to another.
+    public func trustedKeys(host: String, port: Int) async -> [SSHHostKey] {
+        guard Self.isPlausibleHost(host), FileManager.default.fileExists(atPath: knownHostsFile.path) else { return [] }
+        let result = await Self.run(keygenExecutable, ["-F", SSHHostKeys.hostPattern(host: host, port: port), "-f", knownHostsFile.path])
+        guard result.status == 0 else { return [] }
+        return SSHHostKeys.preferredOrder(SSHHostKeys.parseKeyscanOutput(String(decoding: result.output, as: UTF8.self)))
     }
 
     /// The keys the Host presents right now, the type `ssh` prefers first.

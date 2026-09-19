@@ -547,7 +547,10 @@ private final class PinnedHostKeyDelegate: NIOSSHClientServerAuthenticationDeleg
         }
         let actual = "SHA256:" + Data(SHA256.hash(data: blob)).base64EncodedString().trimmingCharacters(in: CharacterSet(charactersIn: "="))
         lock.withLock { fingerprint = actual }
-        if let expectedFingerprint, expectedFingerprint != actual {
+        // The pin may name several fingerprints, separated by spaces: a Host has one key per
+        // algorithm, and a pin that came from another of the Operator's devices cannot know which
+        // of them this client will be shown. The connection that follows records the one it saw.
+        if let expectedFingerprint, !expectedFingerprint.split(separator: " ").contains(Substring(actual)) {
             validationCompletePromise.fail(SystemTransportError.hostKeyMismatch(expected: expectedFingerprint, actual: actual))
         } else {
             validationCompletePromise.succeed(())

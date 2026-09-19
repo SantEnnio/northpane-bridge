@@ -84,5 +84,32 @@ private let vectorKey = SSHHostKey(
     #expect(plain.host == "other-box")
     #expect(plain.port == 2200)
 }
+
+@Test func anAliasAlsoSaysWhichAccountItLogsInAs() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: "sshcfg-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let config = directory.appending(path: "config")
+    try "Host build-box\n    HostName 10.0.0.5\n    User builder\n".write(to: config, atomically: true, encoding: .utf8)
+    let trust = SSHHostKeyTrust(knownHostsFile: directory.appending(path: "known_hosts"), sshConfigFile: config)
+
+    #expect(await trust.resolveDestination(endpoint: "build-box").user == "builder")
+    // The account on the endpoint wins, as it does for `ssh`.
+    #expect(await trust.resolveDestination(endpoint: "dev@build-box").user == "dev")
+    // Nothing names one: another device must not inherit this Mac's user name.
+    #expect(await trust.resolveDestination(endpoint: "other-box").user == nil)
+}
 #endif
 
+
+@Test func theKeysAlreadyTrustedForAHostAreReadBackFromKnownHosts() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: "hostkey-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let trust = SSHHostKeyTrust(knownHostsFile: directory.appending(path: "ssh/known_hosts"))
+
+    #expect(await trust.trustedKeys(host: "build-box", port: 22).isEmpty)
+    try trust.accept([vectorKey])
+    let trusted = await trust.trustedKeys(host: "build-box", port: 22)
+    #expect(trusted.map(\.fingerprint) == [vectorKey.fingerprint])
+    #expect(await trust.trustedKeys(host: "other-box", port: 22).isEmpty)
+}
