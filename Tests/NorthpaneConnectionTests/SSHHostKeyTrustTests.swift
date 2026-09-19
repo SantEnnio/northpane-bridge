@@ -102,6 +102,7 @@ private let vectorKey = SSHHostKey(
 #endif
 
 
+#if os(macOS) || os(Linux)
 @Test func theKeysAlreadyTrustedForAHostAreReadBackFromKnownHosts() async throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: "hostkey-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -113,3 +114,4 @@ private let vectorKey = SSHHostKey(
     #expect(trusted.map(\.fingerprint) == [vectorKey.fingerprint])
     #expect(await trust.trustedKeys(host: "other-box", port: 22).isEmpty)
 }
+#endif

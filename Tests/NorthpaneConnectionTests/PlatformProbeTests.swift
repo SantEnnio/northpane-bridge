@@ -1,3 +1,5 @@
+// The system `ssh` deployment exists only on a Mac, which is the only client that shells out to it.
+#if os(macOS)
 import Foundation
 import Testing
 @testable import NorthpaneConnection
@@ -13,3 +15,4 @@ import Testing
     #expect(POSIXSFTPBridgeDeployment.lastLine(Data("Darwin arm64\n".utf8)) == "darwin arm64")
     #expect(POSIXSFTPBridgeDeployment.lastLine(Data()) == "")
 }
+#endif
