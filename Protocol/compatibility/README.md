@@ -71,3 +71,8 @@ Bridge falls back on the Workspace's own directory) and `workspace_agent_kind`
 from revisions 10 and 11, and answers with the same `workspace_id`, `pane_id`
 and agent fields as `workspace:create`. A client that sees an older revision
 keeps the action out of reach instead of having it refused.
+
+Revision 16 adds the `LIST_HOST_DIRECTORIES` resource command: the folders inside
+one folder of the Host, by name, within the home and temporary directories. It
+reuses `path`, `path_hits`, `relative_path` and `media_type`; no message gains a
+field. A client that sees an older revision keeps typing the path.

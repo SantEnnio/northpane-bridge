@@ -708,6 +708,8 @@ struct NorthpaneBridge {
                 // reveals strictly less than reading does, and the answer is normally pasted
                 // into the pane, so it is held to the same grant rather than a weaker one.
                 case .readWorkspaceFile, .searchWorkspacePaths: .terminalControl
+                // Folder names under roots the search already answers for: the same grant.
+                case .listHostDirectories: .terminalControl
                 // A screenshot shows whatever the Host's screen shows, which is more than any
                 // file the roots hold: nothing weaker than the grant to type into the pane.
                 case .listScreenCaptureTargets, .captureScreen: .terminalControl
@@ -1468,6 +1470,23 @@ private actor BridgeHostContext {
             return .init(commandID: command.commandID,
                 pathHits: results.hits.map { .init(path: $0.path, relativePath: $0.relativePath, rootLabel: $0.rootLabel, isDirectory: $0.isDirectory, byteCount: $0.byteCount, modified: $0.modified) },
                 truncated: results.truncated)
+        case .listHostDirectories:
+            // Folder names only, inside the home and temporary directories: where a new Workspace
+            // could open. Nothing is read and no file is named.
+            do {
+                let listing = try HostDirectoryListing.list(path: command.path ?? "")
+                let separator = listing.directory.hasSuffix("/") || listing.directory.hasSuffix("\\") ? "" : "/"
+                return .init(commandID: command.commandID, relativePath: listing.directory, mediaType: listing.parent ?? "",
+                             pathHits: listing.folders.map {
+                                 .init(path: listing.directory + separator + $0, relativePath: $0, rootLabel: listing.rootLabel,
+                                       isDirectory: true, byteCount: 0, modified: nil)
+                             },
+                             truncated: listing.truncated)
+            } catch HostDirectoryListing.Failure.notADirectory {
+                throw resourceProblem("host_directory_not_found")
+            } catch {
+                throw resourceProblem("host_directory_outside_roots")
+            }
         case .listScreenCaptureTargets:
             #if os(macOS)
             // Names and geometry only: the listing reads no pixel. Missing permission is not an

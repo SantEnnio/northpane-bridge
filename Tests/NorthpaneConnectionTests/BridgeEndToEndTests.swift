@@ -77,6 +77,13 @@ import Testing
     #expect(created.paneID == "workspace-created:p1")
     #expect(FileManager.default.fileExists(atPath: workspaceDirectory))
 
+    // The folders of the Host's home, by name, and nothing outside the roots the Host walks.
+    let homeListing = try await client.listHostDirectories(path: nil)
+    #expect(homeListing.directory == URL(fileURLWithPath: NSHomeDirectory()).resolvingSymlinksInPath().path)
+    #expect(homeListing.parent == nil)
+    #expect(homeListing.folders.allSatisfy { $0.isDirectory && !$0.relativePath.hasPrefix(".") })
+    await #expect(throws: Problem.self) { try await client.listHostDirectories(path: "/etc") }
+
     // A new Pane in the Workspace being observed: a tab of its own, with an agent when asked.
     let pane = try await client.createPane(workspaceID: "workspace-1")
     #expect(pane.workspaceID == "workspace-1")

@@ -572,6 +572,13 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
   /// absolute path in `relative_path`, `media_type` and `total_bytes`, `is_final` set; an
   /// earlier chunk answers with the bytes received so far in `total_bytes`.
   case stagePastedFile // = 18
+
+  /// Lists the folders inside the folder named by `path` (revision 16); empty means the Host
+  /// user's home. Folders only, by name, inside the home and temporary directories, without the
+  /// hidden ones and the credential stores SEARCH_WORKSPACE_PATHS also leaves out. The answer
+  /// carries the folders as `path_hits`, the resolved folder in `relative_path` and the folder
+  /// above it in `media_type` (empty at the top of a root). No file is named and nothing is read.
+  case listHostDirectories // = 19
   case UNRECOGNIZED(Int)
 
   init() {
@@ -599,6 +606,7 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
     case 16: self = .listScreenCaptureTargets
     case 17: self = .captureScreen
     case 18: self = .stagePastedFile
+    case 19: self = .listHostDirectories
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -624,6 +632,7 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
     case .listScreenCaptureTargets: return 16
     case .captureScreen: return 17
     case .stagePastedFile: return 18
+    case .listHostDirectories: return 19
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -649,6 +658,7 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
     .listScreenCaptureTargets,
     .captureScreen,
     .stagePastedFile,
+    .listHostDirectories,
   ]
 
 }
@@ -2326,7 +2336,7 @@ nonisolated extension Northpane_Bridge_V1_TerminalScrollDirection: SwiftProtobuf
 }
 
 nonisolated extension Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf._ProtoNameProviding {
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RESOURCE_COMMAND_KIND_UNSPECIFIED\0\u{1}LIST_RESOURCES\0\u{1}REGISTER_PREVIEW\0\u{1}UPDATE_PREVIEW\0\u{1}CLOSE_PREVIEW\0\u{1}FETCH_PREVIEW_HTTP\0\u{1}PUBLISH_ARTIFACT\0\u{1}READ_ARTIFACT\0\u{1}DELETE_ARTIFACT\0\u{1}LIST_ARTIFACT_ENTRIES\0\u{1}STREAM_PREVIEW_HTTP\0\u{1}OPEN_PREVIEW_WEBSOCKET\0\u{1}SEND_PREVIEW_WEBSOCKET\0\u{1}CLOSE_PREVIEW_WEBSOCKET\0\u{1}READ_WORKSPACE_FILE\0\u{1}SEARCH_WORKSPACE_PATHS\0\u{1}LIST_SCREEN_CAPTURE_TARGETS\0\u{1}CAPTURE_SCREEN\0\u{1}STAGE_PASTED_FILE\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RESOURCE_COMMAND_KIND_UNSPECIFIED\0\u{1}LIST_RESOURCES\0\u{1}REGISTER_PREVIEW\0\u{1}UPDATE_PREVIEW\0\u{1}CLOSE_PREVIEW\0\u{1}FETCH_PREVIEW_HTTP\0\u{1}PUBLISH_ARTIFACT\0\u{1}READ_ARTIFACT\0\u{1}DELETE_ARTIFACT\0\u{1}LIST_ARTIFACT_ENTRIES\0\u{1}STREAM_PREVIEW_HTTP\0\u{1}OPEN_PREVIEW_WEBSOCKET\0\u{1}SEND_PREVIEW_WEBSOCKET\0\u{1}CLOSE_PREVIEW_WEBSOCKET\0\u{1}READ_WORKSPACE_FILE\0\u{1}SEARCH_WORKSPACE_PATHS\0\u{1}LIST_SCREEN_CAPTURE_TARGETS\0\u{1}CAPTURE_SCREEN\0\u{1}STAGE_PASTED_FILE\0\u{1}LIST_HOST_DIRECTORIES\0")
 }
 
 nonisolated extension Northpane_Bridge_V1_ResourceKind: SwiftProtobuf._ProtoNameProviding {

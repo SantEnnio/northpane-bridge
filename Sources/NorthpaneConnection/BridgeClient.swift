@@ -41,6 +41,18 @@ public struct HostPathSearchResults: Equatable, Sendable {
     public init(hits: [HostPathHit], truncated: Bool) { self.hits = hits; self.truncated = truncated }
 }
 
+/// The folders inside one folder of the Host: where the operator is, where up is, what is below.
+public struct HostFolderListing: Equatable, Sendable {
+    public let directory: String
+    /// Nil at the top of what the Host lets be walked.
+    public let parent: String?
+    public let folders: [HostPathHit]
+    public let truncated: Bool
+    public init(directory: String, parent: String?, folders: [HostPathHit], truncated: Bool) {
+        self.directory = directory; self.parent = parent; self.folders = folders; self.truncated = truncated
+    }
+}
+
 /// One thing the Host's screen can show. `id` is opaque and valid until the next listing.
 public struct ScreenCaptureTarget: Equatable, Hashable, Sendable, Identifiable {
     public enum Kind: Equatable, Hashable, Sendable { case display, window }
@@ -213,6 +225,17 @@ public actor NorthpaneBridgeClient {
         guard trimmed.count >= 2 else { return .init(hits: [], truncated: false) }
         let result = try await performResourceCommand(.init(kind: .searchWorkspacePaths, workspaceID: workspaceID, length: limit, paneID: paneID, query: trimmed), channelID: channelID)
         return .init(hits: result.pathHits.map { .init(path: $0.path, relativePath: $0.relativePath, rootLabel: $0.rootLabel, isDirectory: $0.isDirectory, byteCount: $0.byteCount, modified: $0.modified) },
+                     truncated: result.truncated)
+    }
+
+    /// Lists the folders inside one folder of the Host, `nil` meaning the Host user's home, so a
+    /// place for a new Workspace can be walked to. Needs schema revision 16; an older Bridge has
+    /// no such command and is refused locally.
+    public func listHostDirectories(path: String?, channelID: ChannelID = ChannelID()) async throws -> HostFolderListing {
+        guard let accepted, accepted.schemaRevision >= 16 else { throw Problem.incompatibleProtocol }
+        let result = try await performResourceCommand(.init(kind: .listHostDirectories, path: path ?? ""), channelID: channelID)
+        return .init(directory: result.relativePath ?? "", parent: (result.mediaType ?? "").isEmpty ? nil : result.mediaType,
+                     folders: result.pathHits.map { .init(path: $0.path, relativePath: $0.relativePath, rootLabel: $0.rootLabel, isDirectory: true, byteCount: 0, modified: nil) },
                      truncated: result.truncated)
     }
 

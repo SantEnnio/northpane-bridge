@@ -289,6 +289,9 @@ public enum ResourceCommandKind: String, Codable, Sendable {
     /// idempotency key, under the Host user's temporary folder; the last chunk is answered with
     /// the absolute path an agent reads it from.
     case stagePastedFile
+    /// Schema revision 16: list the folders inside one folder of the Host, by name, so a place
+    /// for a new Workspace can be walked to instead of typed.
+    case listHostDirectories
 }
 public enum ResourceKind: String, Codable, Sendable { case preview, artifact }
 public enum ViewerAvailability: String, Codable, Sendable { case available, none, unknown }
