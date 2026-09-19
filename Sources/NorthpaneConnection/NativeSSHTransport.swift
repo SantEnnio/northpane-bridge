@@ -220,6 +220,56 @@ public struct NativeSFTPBridgeDeployment: RemoteBridgeDeploymentAdapter {
         try await executeChecked("set -eu; root=\"$HOME/.local/share/northpane/bridge/versions\"; [ -d \"$root\" ] || exit 0; for candidate in \"$root\"/*; do [ -d \"$candidate\" ] || continue; case \" \(quoted) \" in *\" $(basename \"$candidate\") \"*) ;; *) rm -rf -- \"$candidate\" ;; esac; done")
     }
 
+    /// Runs one of the Bridge release's installer scripts on the Host, reporting
+    /// what it printed together with its exit status.
+    ///
+    /// The status is the point. Both installers answer with the same documented
+    /// table of exit codes, and the app turns those into what it tells the
+    /// Operator; a caller that only learned "it failed" could not tell a refused
+    /// digest from a Host that is already served by the app's own Bridge.
+    public func runInstallerShellScript(_ script: String, arguments: [String]) async throws -> (exitCode: Int32, output: String) {
+        let safe = try Self.checkedArguments(arguments)
+        let session = try await openSession(request: .exec(("sh -s -- " + safe.joined(separator: " "))), reportsExitStatus: true)
+        let result = try await session.sendAndFinishReportingExit(Data(script.utf8))
+        return (result.exitCode, String(decoding: result.output, as: UTF8.self))
+    }
+
+    /// The Windows counterpart. PowerShell reads a script from stdin only by
+    /// giving up its named parameters, so the script is put on the Host over
+    /// SFTP, run by path, and removed afterwards.
+    public func runInstallerPowerShellScript(_ script: String, arguments: [String]) async throws -> (exitCode: Int32, output: String) {
+        let safe = try Self.checkedArguments(arguments)
+        let remote = ".northpane/incoming/northpane-install-\(UUID().uuidString).ps1"
+        _ = try await executePowerShell("New-Item -ItemType Directory -Force -Path \"$HOME/.northpane/incoming\" | Out-Null")
+        let staging = try await openSession(request: .subsystem("sftp"))
+        try await staging.upload(Data(script.utf8), path: remote)
+        defer { Task { _ = try? await executePowerShell("Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $HOME '\(remote)')") } }
+        // A parameter name must arrive bare or it becomes positional, and the
+        // trailing `exit $LASTEXITCODE` is what carries the script's own status
+        // out of `powershell.exe`: a script run with `&` that ends in `exit 22`
+        // otherwise leaves the caller exiting 1, flattening the whole table.
+        let invocation = "& (Join-Path $HOME '\(remote)') "
+            + safe.map { $0.hasPrefix("-") ? $0 : "'\($0)'" }.joined(separator: " ")
+            + "; exit $LASTEXITCODE"
+        guard let command = invocation.data(using: .utf16LittleEndian) else { throw BridgeInstallationError.transferFailed }
+        let session = try await openSession(
+            request: .exec("powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand \(command.base64EncodedString())"),
+            reportsExitStatus: true)
+        let result = try await session.sendAndFinishReportingExit(Data())
+        return (result.exitCode, String(decoding: result.output, as: UTF8.self))
+    }
+
+    /// The Host's login shell splits the command line again, so every argument
+    /// has to survive that untouched. Rather than quote for an unknown shell,
+    /// refuse anything that is not a bare word — which every argument the
+    /// installers take already is.
+    private static func checkedArguments(_ arguments: [String]) throws -> [String] {
+        for argument in arguments where argument.range(of: #"^[A-Za-z0-9._/:=-]+$"#, options: .regularExpression) == nil {
+            throw BridgeInstallationError.invalidManifest
+        }
+        return arguments
+    }
+
     private func executeScript(_ script: String, version: String) async throws {
         guard version.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"#, options: .regularExpression) != nil else { throw BridgeInstallationError.invalidManifest }
         let session = try await openSession(request: .exec("sh -s -- \(version)"))
@@ -237,7 +287,7 @@ public struct NativeSFTPBridgeDeployment: RemoteBridgeDeploymentAdapter {
         return try await execute("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand \(command.base64EncodedString())")
     }
 
-    private func openSession(request: NativeSSHRequest) async throws -> NativeSSHRawSession {
+    private func openSession(request: NativeSSHRequest, reportsExitStatus: Bool = false) async throws -> NativeSSHRawSession {
         let key = try P256.Signing.PrivateKey(rawRepresentation: credential.rawPrivateKey)
         let authentication = KeyOnlyAuthenticationDelegate(username: username, privateKey: NIOSSHPrivateKey(p256Key: key))
         let hostKeys = PinnedHostKeyDelegate(expectedFingerprint: expectedFingerprint)
@@ -253,7 +303,7 @@ public struct NativeSFTPBridgeDeployment: RemoteBridgeDeploymentAdapter {
                 let promise = parent.eventLoop.makePromise(of: Channel.self)
                 ssh.createChannel(promise) { channel, type in
                     guard type == .session else { return channel.eventLoop.makeFailedFuture(SystemTransportError.launchFailed) }
-                    return channel.pipeline.addHandler(NativeSSHRawHandler(request: request, inbound: inbound))
+                    return channel.pipeline.addHandler(NativeSSHRawHandler(request: request, inbound: inbound, reportsExitStatus: reportsExitStatus))
                 }
                 return promise.futureResult
             }.get()
@@ -272,6 +322,19 @@ private final class SSHInboundBuffer: @unchecked Sendable {
     private var queued: [Data] = []
     private var waiters: [CheckedContinuation<Data?, Error>] = []
     private var terminal: Result<Void, Error>?
+    private var exit: Int32?
+
+    /// The remote command's exit status, once it has sent one.
+    ///
+    /// A caller that only wants the output treats any non-zero status as a
+    /// failure and never reads this. A caller running a script whose exit codes
+    /// are a documented contract — the Bridge installers — needs the number
+    /// itself, because collapsing it loses the difference between "the digest
+    /// was refused" and "this Host is already served by the app's own Bridge".
+    var exitStatus: Int32? {
+        get { lock.withLock { exit } }
+        set { lock.withLock { exit = newValue } }
+    }
 
     func push(_ data: Data) {
         let waiter = lock.withLock { () -> CheckedContinuation<Data?, Error>? in
@@ -532,7 +595,12 @@ private final class NativeSSHRawHandler: ChannelDuplexHandler, @unchecked Sendab
     typealias OutboundOut = SSHChannelData
     private let request: NativeSSHRequest
     private let inbound: SSHInboundBuffer
-    init(request: NativeSSHRequest, inbound: SSHInboundBuffer) { self.request = request; self.inbound = inbound }
+    /// When true a non-zero exit is recorded and handed back instead of ending
+    /// the stream with an error, so the caller can read the status itself.
+    private let reportsExitStatus: Bool
+    init(request: NativeSSHRequest, inbound: SSHInboundBuffer, reportsExitStatus: Bool = false) {
+        self.request = request; self.inbound = inbound; self.reportsExitStatus = reportsExitStatus
+    }
     func channelActive(context: ChannelHandlerContext) {
         let future: EventLoopFuture<Void> = switch request {
         case let .exec(command): context.triggerUserOutboundEvent(SSHChannelRequestEvent.ExecRequest(command: command, wantReply: true))
@@ -550,7 +618,10 @@ private final class NativeSSHRawHandler: ChannelDuplexHandler, @unchecked Sendab
         context.write(wrapOutboundOut(.init(type: .channel, data: .byteBuffer(unwrapOutboundIn(data)))), promise: promise)
     }
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
-        if let status = event as? SSHChannelRequestEvent.ExitStatus, status.exitStatus != 0 { inbound.finish(error: SystemTransportError.launchFailed) }
+        if let status = event as? SSHChannelRequestEvent.ExitStatus {
+            inbound.exitStatus = Int32(status.exitStatus)
+            if status.exitStatus != 0, !reportsExitStatus { inbound.finish(error: SystemTransportError.launchFailed) }
+        }
         context.fireUserInboundEventTriggered(event)
     }
     func channelInactive(context: ChannelHandlerContext) { inbound.finish(); context.fireChannelInactive() }
@@ -565,6 +636,19 @@ private actor NativeSSHRawSession {
     init(parent: Channel, child: Channel, inbound: SSHInboundBuffer) { self.parent = parent; self.child = child; self.inbound = inbound }
 
     func sendAndFinish(_ data: Data) async throws -> Data {
+        try await collect(data)
+    }
+
+    /// Like `sendAndFinish`, but hands back the exit status instead of turning
+    /// it into an error. Only meaningful on a session opened with
+    /// `reportsExitStatus`; a Host that sends no status at all reads as 0, the
+    /// same thing `ssh` reports for a clean channel.
+    func sendAndFinishReportingExit(_ data: Data) async throws -> (exitCode: Int32, output: Data) {
+        let output = try await collect(data)
+        return (inbound.exitStatus ?? 0, output)
+    }
+
+    private func collect(_ data: Data) async throws -> Data {
         if !data.isEmpty { try await child.writeAndFlush(ByteBuffer(data: data)).get() }
         try await child.close(mode: .output).get()
         var output = Data()
