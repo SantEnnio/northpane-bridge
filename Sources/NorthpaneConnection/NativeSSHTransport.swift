@@ -604,7 +604,14 @@ private final class SSHBridgeExecHandler: ChannelDuplexHandler, @unchecked Senda
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if let status = event as? SSHChannelRequestEvent.ExitStatus, status.exitStatus != 0 {
-            inbound.finish(error: SystemTransportError.launchFailed)
+            // The same reading the system `ssh` transport gives these statuses: a shell that found
+            // no Bridge to run is a Host to install one on, not a connection that failed. Without
+            // it a phone or a tablet could never offer a new Host its first Bridge.
+            switch status.exitStatus {
+            case 126, 127: inbound.finish(error: SystemTransportError.remoteBridgeUnavailable)
+            case 9009: inbound.finish(error: SystemTransportError.remoteShellMismatch(.windows))
+            default: inbound.finish(error: SystemTransportError.launchFailed)
+            }
         }
         context.fireUserInboundEventTriggered(event)
     }
