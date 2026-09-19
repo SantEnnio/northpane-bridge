@@ -182,7 +182,7 @@ public struct POSIXSFTPBridgeDeployment: RemoteBridgeDeploymentAdapter {
         // `ssh` joins its arguments into one command line that the Host's login shell re-splits,
         // so the probe must be a single simple command: no quoting, no substitutions.
         let posix = try? await runCapturing("/usr/bin/ssh", identityArguments + [endpoint, "uname", "-sm"], stdin: nil)
-        let raw = posix.map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() } ?? ""
+        let raw = posix.map(Self.lastLine) ?? ""
         let parts = raw.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
         switch (parts.first ?? "", parts.count > 1 ? parts[1] : "") {
         case ("darwin", "arm64"): return "macos-arm64"
@@ -191,7 +191,7 @@ public struct POSIXSFTPBridgeDeployment: RemoteBridgeDeploymentAdapter {
         case ("linux", "x86_64"): return "linux-x86_64"
         default:
             let windows = try await runPowerShell("[Console]::Write($env:PROCESSOR_ARCHITECTURE)")
-            let architecture = String(decoding: windows, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let architecture = Self.lastLine(windows)
             if architecture == "amd64" { return "windows-x86_64" }
             if architecture == "arm64" { return "windows-arm64" }
             throw BridgeInstallationError.invalidManifest
@@ -289,6 +289,14 @@ public struct POSIXSFTPBridgeDeployment: RemoteBridgeDeploymentAdapter {
     private func run(_ executable: String, _ arguments: [String], stdin: Data?) async throws {
         _ = try await runCapturing(executable, arguments, stdin: stdin)
     }
+    /// The answer to a one-line probe: the last line of what came back, lowercased. `ssh` writes its
+    /// own warnings to the same stream first (an older server earns three lines about post-quantum
+    /// key exchange), and read whole they turned "amd64" into something no platform matches.
+    static func lastLine(_ output: Data) -> String {
+        String(decoding: output, as: UTF8.self).split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }.last { !$0.isEmpty }?.lowercased() ?? ""
+    }
+
     private func runPowerShell(_ script: String) async throws -> Data {
         guard let command = script.data(using: .utf16LittleEndian) else { throw BridgeInstallationError.transferFailed }
         let encoded = command.base64EncodedString()
