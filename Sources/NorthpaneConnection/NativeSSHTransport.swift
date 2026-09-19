@@ -6,6 +6,40 @@ import NIOPosix
 import NIOSSH
 import NorthpaneProtocol
 
+/// Names what a NIO connect failure actually was, in the vocabulary the rest of
+/// the app already speaks.
+///
+/// Without this a Host that cannot be reached surfaces as `NIOConnectionError`,
+/// which reaches the Operator as a type name and a number. The commonest case
+/// by far is a name that resolves nowhere — an `ssh_config` alias, say, which
+/// works on a Mac because `ssh` expands it and means nothing to a phone.
+enum NativeSSHReachability {
+    static func failure(for error: Error) -> SSHReachabilityFailure? {
+        guard let connection = error as? NIOConnectionError else { return nil }
+        // No address was ever reached for: the name gave nothing to connect to.
+        guard !connection.connectionErrors.isEmpty else { return .nameNotResolved }
+        for attempt in connection.connectionErrors {
+            guard let io = attempt.error as? IOError else { continue }
+            switch io.errnoCode {
+            case ECONNREFUSED: return .connectionRefused
+            case ETIMEDOUT: return .timedOut
+            case EHOSTUNREACH, ENETUNREACH, EHOSTDOWN: return .hostUnreachable
+            default: continue
+            }
+        }
+        return .hostUnreachable
+    }
+
+    /// Runs a connect and rewrites its failure, leaving every other error alone.
+    static func named<T>(_ connect: () async throws -> T) async throws -> T {
+        do { return try await connect() }
+        catch {
+            if let reachability = failure(for: error) { throw SystemTransportError.sshUnreachable(reachability) }
+            throw error
+        }
+    }
+}
+
 /// A native, key-only SSH transport for iOS. The first successful connection
 /// records the SSH host-key fingerprint alongside the separately verified and
 /// signed Northpane Host identity. All subsequent connections require both pins.
@@ -34,21 +68,23 @@ public actor NativeSSHBridgeTransport: BridgeTransport {
         let cryptoKey = try P256.Signing.PrivateKey(rawRepresentation: credential.rawPrivateKey)
         let authentication = KeyOnlyAuthenticationDelegate(username: username, privateKey: NIOSSHPrivateKey(p256Key: cryptoKey))
         let hostKeys = PinnedHostKeyDelegate(expectedFingerprint: expectedHostKeyFingerprint)
-        let parent = try await ClientBootstrap(group: SSHEventLoopGroup.shared)
-            .channelInitializer { channel in
-                channel.eventLoop.makeCompletedFuture {
-                    try channel.pipeline.syncOperations.addHandlers(
-                        NIOSSHHandler(
-                            role: .client(.init(userAuthDelegate: authentication, serverAuthDelegate: hostKeys)),
-                            allocator: channel.allocator,
-                            inboundChildChannelInitializer: nil
-                        ),
-                        SSHParentErrorHandler()
-                    )
+        let parent = try await NativeSSHReachability.named {
+            try await ClientBootstrap(group: SSHEventLoopGroup.shared)
+                .channelInitializer { channel in
+                    channel.eventLoop.makeCompletedFuture {
+                        try channel.pipeline.syncOperations.addHandlers(
+                            NIOSSHHandler(
+                                role: .client(.init(userAuthDelegate: authentication, serverAuthDelegate: hostKeys)),
+                                allocator: channel.allocator,
+                                inboundChildChannelInitializer: nil
+                            ),
+                            SSHParentErrorHandler()
+                        )
+                    }
                 }
-            }
-            .connect(host: host, port: port)
-            .get()
+                .connect(host: host, port: port)
+                .get()
+        }
 
         let inbound = SSHInboundBuffer()
         do {
@@ -291,12 +327,14 @@ public struct NativeSFTPBridgeDeployment: RemoteBridgeDeploymentAdapter {
         let key = try P256.Signing.PrivateKey(rawRepresentation: credential.rawPrivateKey)
         let authentication = KeyOnlyAuthenticationDelegate(username: username, privateKey: NIOSSHPrivateKey(p256Key: key))
         let hostKeys = PinnedHostKeyDelegate(expectedFingerprint: expectedFingerprint)
-        let parent = try await ClientBootstrap(group: SSHEventLoopGroup.shared)
-            .channelInitializer { channel in
-                channel.eventLoop.makeCompletedFuture {
-                    try channel.pipeline.syncOperations.addHandlers(NIOSSHHandler(role: .client(.init(userAuthDelegate: authentication, serverAuthDelegate: hostKeys)), allocator: channel.allocator, inboundChildChannelInitializer: nil), SSHParentErrorHandler())
-                }
-            }.connect(host: host, port: port).get()
+        let parent = try await NativeSSHReachability.named {
+            try await ClientBootstrap(group: SSHEventLoopGroup.shared)
+                .channelInitializer { channel in
+                    channel.eventLoop.makeCompletedFuture {
+                        try channel.pipeline.syncOperations.addHandlers(NIOSSHHandler(role: .client(.init(userAuthDelegate: authentication, serverAuthDelegate: hostKeys)), allocator: channel.allocator, inboundChildChannelInitializer: nil), SSHParentErrorHandler())
+                    }
+                }.connect(host: host, port: port).get()
+        }
         let inbound = SSHInboundBuffer()
         do {
             let child = try await parent.pipeline.handler(type: NIOSSHHandler.self).flatMap { ssh in
