@@ -193,6 +193,24 @@ public actor HerdrRuntime {
         return CreatedWorkspace(workspaceID: workspaceID, paneID: response.result.rootPane.paneID)
     }
 
+    /// Splits a Pane that exists, and answers with the Pane the split made.
+    ///
+    /// Unlike a new tab, this does make something on the Host smaller: the Pane that was split
+    /// gives up part of its area, which is what whoever asked for a split wants to see at the
+    /// Host. The focus stays where it was, as with a new tab.
+    public func splitPane(paneID: String, direction: PaneSplitDirection, workingDirectory: String,
+                          sessionName: String? = nil) async throws -> CreatedWorkspace {
+        var arguments: [String] = []
+        if let sessionName, !sessionName.isEmpty { arguments += ["--session", sessionName] }
+        arguments += ["pane", "split", paneID, "--direction", direction.rawValue, "--cwd", workingDirectory, "--no-focus"]
+        let data = try await runner.run(arguments: arguments)
+        guard let response = try? JSONDecoder().decode(PaneSplitResponse.self, from: data),
+              response.result.type == "pane_info", !response.result.pane.paneID.isEmpty,
+              response.result.pane.paneID != paneID
+        else { throw HerdrRuntimeError.malformedResponse }
+        return CreatedWorkspace(workspaceID: response.result.pane.workspaceID, paneID: response.result.pane.paneID)
+    }
+
     /// Closes the Workspace in the same Herdr session the client is observing. Herdr owns the
     /// lifecycle: closing the Workspace terminates its panes and foreground processes, but it does
     /// not remove the working directories or files those processes used.
@@ -350,6 +368,19 @@ private struct TabCreateResponse: Decodable {
         let type: String
         let rootPane: RootPane
         enum CodingKeys: String, CodingKey { case type, rootPane = "root_pane" }
+    }
+    let result: Result
+}
+
+private struct PaneSplitResponse: Decodable {
+    struct Result: Decodable {
+        struct Pane: Decodable {
+            let paneID: String
+            let workspaceID: String
+            enum CodingKeys: String, CodingKey { case paneID = "pane_id", workspaceID = "workspace_id" }
+        }
+        let type: String
+        let pane: Pane
     }
     let result: Result
 }

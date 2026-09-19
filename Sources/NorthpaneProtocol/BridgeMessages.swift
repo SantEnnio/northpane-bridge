@@ -125,6 +125,13 @@ public enum WorkspaceAgentKind: String, CaseIterable, Codable, Sendable {
     case openCode
 }
 
+/// Where the new Pane goes when one is split (schema revision 17): Herdr's own two directions.
+/// It travels in the mutation's target, `pane:split:<direction>:<pane_id>`, not in a field.
+public enum PaneSplitDirection: String, CaseIterable, Codable, Sendable {
+    case right
+    case down
+}
+
 public struct MutationRequest: Equatable, Codable, Sendable {
     public let commandID: UUID
     public let clientDeviceID: ClientDeviceID

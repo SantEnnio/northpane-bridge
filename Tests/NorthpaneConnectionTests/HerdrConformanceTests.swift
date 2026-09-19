@@ -128,6 +128,16 @@ import NorthpaneSecurity
     #expect(newPane?.tabID != pane.tabID)
     print("[conformance] the second pane is in tab \(newPane?.tabID ?? "?"), cwd \(newPane?.cwd ?? "?")")
 
+    // A split of that second Pane (revision 17): a third Pane in the same tab, the focus left alone.
+    let split = try await client.splitPane(paneID: second.paneID, direction: .right)
+    print("[conformance] split \(second.paneID) into \(split.paneID)")
+    #expect(split.paneID != second.paneID)
+    try await Task.sleep(for: .milliseconds(500))
+    let withSplit = try await client.observe(sessionName: session)
+    let splitPane = withSplit.panes.first { $0.id == split.paneID }
+    #expect(splitPane?.workspaceID == created.workspaceID)
+    #expect(splitPane?.tabID == newPane?.tabID)
+
     let closed = try await client.closeWorkspace(workspaceID: created.workspaceID)
     #expect(closed.outcome == .applied)
     try await Task.sleep(for: .seconds(1))

@@ -93,6 +93,15 @@ import Testing
     // A Workspace the client is not looking at is not a place to open one.
     await #expect(throws: Problem.self) { try await client.createPane(workspaceID: "workspace-unknown") }
 
+    // A split of a Pane being observed (revision 17): the answer names the Pane the split made.
+    let split = try await client.splitPane(paneID: "pane-1", direction: .right)
+    #expect(split.paneID == "workspace-1:p9")
+    #expect(split.workspaceID == "workspace-1")
+    let agentSplit = try await client.splitPane(paneID: "pane-1", direction: .down, agentKind: .codex)
+    #expect(agentSplit.workspaceAgentStarted)
+    // A Pane the client is not looking at cannot be split.
+    await #expect(throws: Problem.self) { try await client.splitPane(paneID: "pane-unknown", direction: .right) }
+
     let closed = try await client.closeWorkspace(workspaceID: "workspace-1")
     #expect(closed.outcome == .applied)
     #expect(closed.workspaceID == "workspace-1")

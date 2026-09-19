@@ -76,3 +76,10 @@ Revision 16 adds the `LIST_HOST_DIRECTORIES` resource command: the folders insid
 one folder of the Host, by name, within the home and temporary directories. It
 reuses `path`, `path_hits`, `relative_path` and `media_type`; no message gains a
 field. A client that sees an older revision keeps typing the path.
+
+Revision 17 changes no message: it says the Bridge understands the
+`pane:split:<direction>:<pane_id>` mutation, where the direction is `right` or
+`down`. It splits a Pane that exists and answers like `pane:create`, with the
+`workspace_id` and `pane_id` of the Pane the split made and the same agent
+fields. The new Pane opens where the Pane it came from is. A client that sees an
+older revision keeps the action out of reach instead of having it refused.

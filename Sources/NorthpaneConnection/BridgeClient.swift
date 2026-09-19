@@ -379,6 +379,42 @@ public actor NorthpaneBridgeClient {
         }
     }
 
+    /// Splits a Pane the client is observing (schema revision 17): a new Pane to its right or
+    /// below it, optionally with an agent already started in it. The Bridge chooses the
+    /// directory: where the Pane being split is.
+    @discardableResult
+    public func splitPane(paneID: String, direction: PaneSplitDirection, agentKind: WorkspaceAgentKind = .shell,
+                          deadline: Date? = nil) async throws -> WireMutationReceipt {
+        guard let accepted, accepted.schemaRevision >= 17, accepted.capabilities.contains(.terminalControl) else {
+            throw Problem.incompatibleProtocol
+        }
+        let normalized = paneID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.range(of: #"^[A-Za-z0-9._:-]{1,128}$"#, options: .regularExpression) != nil else {
+            throw Problem.malformedFrame
+        }
+        let commandID = UUID()
+        let mutation = MutationRequest(
+            commandID: commandID,
+            clientDeviceID: deviceID,
+            capability: .terminalControl,
+            targetID: "pane:split:\(direction.rawValue):\(normalized)",
+            expectedRevision: 0,
+            deadline: deadline ?? Date().addingTimeInterval(agentKind == .shell ? 15 : 40),
+            workspaceAgentKind: agentKind
+        )
+        let response = try await request(.mutation(mutation))
+        switch response.payload {
+        case let .mutationReceipt(receipt) where receipt.commandID == commandID:
+            if receipt.outcome != .applied, let problem = receipt.problem { throw problem }
+            guard receipt.outcome == .applied, !receipt.paneID.isEmpty, receipt.paneID != normalized else {
+                throw Problem.malformedFrame
+            }
+            return receipt
+        case let .problem(problem): throw problem
+        default: throw Problem.malformedFrame
+        }
+    }
+
     /// Opens a new Pane — a new tab — in a Workspace the client is observing (schema revision 15),
     /// optionally with an agent already started in it. The Bridge chooses the directory: the
     /// Workspace's own.

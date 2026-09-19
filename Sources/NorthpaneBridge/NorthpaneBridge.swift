@@ -526,6 +526,60 @@ struct NorthpaneBridge {
                     }
                     break
                 }
+                if mutation.targetID.hasPrefix("pane:split:") {
+                    // A Pane beside or below one the client is looking at. The direction is part
+                    // of the target, so revision 17 adds no field; the rest is a new Pane's.
+                    do {
+                        guard request.schemaRevision >= 17 else { throw Problem.incompatibleProtocol }
+                        guard mutation.capability == .terminalControl else { throw Problem.unauthorized }
+                        try await authority.authorize(deviceID: device, capability: .terminalControl)
+                        let parts = mutation.targetID.dropFirst("pane:split:".count).split(separator: ":", maxSplits: 1).map(String.init)
+                        guard parts.count == 2, let direction = PaneSplitDirection(rawValue: parts[0]),
+                              parts[1].range(of: #"^[A-Za-z0-9._:-]{1,128}$"#, options: .regularExpression) != nil
+                        else { throw Problem.malformedFrame }
+                        let paneID = parts[1]
+                        let snapshot = await observation.snapshot
+                        guard let pane = snapshot?.panes.first(where: { $0.id == paneID }) else {
+                            throw Problem(code: "pane_not_found", locus: .herdr, retry: .afterRefresh,
+                                          recoveryAction: "refreshSnapshot", phase: .mutation)
+                        }
+                        // Where the Pane is, else where its Workspace works, else the home
+                        // directory: the first of them that is still there.
+                        let candidates = [pane.cwd, snapshot?.workspaces.first { $0.id == pane.workspaceID }?.worktreePath].compactMap { $0 }
+                            + [FileManager.default.homeDirectoryForCurrentUser.path]
+                        let directory = candidates.first { path in
+                            var isDirectory: ObjCBool = false
+                            return !path.isEmpty && FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+                        } ?? FileManager.default.homeDirectoryForCurrentUser.path
+                        let created = try await context.splitPane(paneID: paneID, direction: direction, workingDirectory: directory,
+                                                                  agentKind: mutation.workspaceAgentKind,
+                                                                  sessionName: await observation.sessionName)
+                        try? await context.audit(deviceID: device, category: "pane", reference: created.paneID,
+                                                 outcome: "applied", reason: created.agentStartFailed ? "client-requested-split-agent-failed" : "client-requested-split")
+                        let launchProblem = created.agentStartFailed
+                            ? Problem(code: "workspace_agent_start_failed", locus: .herdr, retry: .afterUserAction,
+                                      recoveryAction: "openWorkspaceAndStartAgent", phase: .mutation)
+                            : nil
+                        let receipt = WireMutationReceipt(commandID: mutation.commandID, outcome: .applied,
+                                                          problem: launchProblem, workspaceID: created.workspaceID, paneID: created.paneID,
+                                                          workspaceAgentKind: mutation.workspaceAgentKind,
+                                                          workspaceAgentStarted: created.agentStarted)
+                        await context.remember(receipt)
+                        responsePayload = .mutationReceipt(receipt)
+                    } catch let problem as Problem {
+                        responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .rejected, problem: problem))
+                    } catch AgentExecutableResolutionError.unavailable {
+                        let problem = Problem(code: "workspace_agent_unavailable", locus: .herdr, retry: .afterUserAction,
+                                              recoveryAction: "installAgentOrChooseShell", phase: .mutation)
+                        responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied, problem: problem,
+                                                                 workspaceAgentKind: mutation.workspaceAgentKind))
+                    } catch {
+                        let problem = Problem(code: "pane_split_failed", locus: .herdr, retry: .afterRefresh,
+                                              recoveryAction: "refreshWorkspaceAndRetry", phase: .mutation)
+                        responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied, problem: problem))
+                    }
+                    break
+                }
                 if mutation.targetID.hasPrefix("workspace:rename:") {
                     // The name is Herdr's own label, so every client sees it; renaming is a
                     // controlled mutation like closing, and the Workspace must be one the client
@@ -1159,6 +1213,22 @@ private actor BridgeHostContext {
     /// Workspace has. Unlike a new Workspace it never makes a directory: the Pane opens where the
     /// Workspace already is.
     func createPane(workspaceID: String, workingDirectory: String, agentKind: WorkspaceAgentKind, sessionName: String?) async throws -> WorkspaceCreationResult {
+        try await openPane(workingDirectory: workingDirectory, agentKind: agentKind, sessionName: sessionName) { runtime in
+            try await runtime.createTab(workspaceID: workspaceID, workingDirectory: workingDirectory, sessionName: sessionName)
+        }
+    }
+
+    /// A new Pane beside or below one that exists (schema revision 17), with the same choice of
+    /// what runs in it. It opens where the Pane it came from is.
+    func splitPane(paneID: String, direction: PaneSplitDirection, workingDirectory: String, agentKind: WorkspaceAgentKind,
+                   sessionName: String?) async throws -> WorkspaceCreationResult {
+        try await openPane(workingDirectory: workingDirectory, agentKind: agentKind, sessionName: sessionName) { runtime in
+            try await runtime.splitPane(paneID: paneID, direction: direction, workingDirectory: workingDirectory, sessionName: sessionName)
+        }
+    }
+
+    private func openPane(workingDirectory: String, agentKind: WorkspaceAgentKind, sessionName: String?,
+                          using open: (HerdrRuntime) async throws -> CreatedWorkspace) async throws -> WorkspaceCreationResult {
         let resolver = AgentExecutableResolver()
         let detected: DetectedAgentExecutable? = if agentKind == .shell {
             nil
@@ -1174,18 +1244,18 @@ private actor BridgeHostContext {
             herdrExecutable = runner.executableURL
             runtime = HerdrRuntime(runner: runner)
         }
-        let created = try await runtime!.createTab(workspaceID: workspaceID, workingDirectory: workingDirectory, sessionName: sessionName)
+        let created = try await open(runtime!)
         guard agentKind != .shell else {
-            return WorkspaceCreationResult(workspaceID: workspaceID, paneID: created.paneID, agentStarted: false, agentStartFailed: false)
+            return WorkspaceCreationResult(workspaceID: created.workspaceID, paneID: created.paneID, agentStarted: false, agentStartFailed: false)
         }
         do {
             // Named after the Pane, not the Workspace: a Workspace can now hold several agents.
             try await runtime!.startAgent(agentKind, executableURL: detected!.url,
                                           name: HerdrAgentNaming.name(workspaceID: created.paneID),
                                           paneID: created.paneID, sessionName: sessionName)
-            return WorkspaceCreationResult(workspaceID: workspaceID, paneID: created.paneID, agentStarted: true, agentStartFailed: false)
+            return WorkspaceCreationResult(workspaceID: created.workspaceID, paneID: created.paneID, agentStarted: true, agentStartFailed: false)
         } catch {
-            return WorkspaceCreationResult(workspaceID: workspaceID, paneID: created.paneID, agentStarted: false, agentStartFailed: true)
+            return WorkspaceCreationResult(workspaceID: created.workspaceID, paneID: created.paneID, agentStarted: false, agentStartFailed: true)
         }
     }
 

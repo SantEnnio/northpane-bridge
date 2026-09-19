@@ -104,6 +104,23 @@ private let fullSnapshot = Data(#"{"id":"test","result":{"type":"session_snapsho
     #expect(await runner.capturedArguments() == [["--session", "default", "tab", "create", "--workspace", "wB", "--cwd", "/private/tmp/project"]])
 }
 
+@Test func executableRuntimeSplitsAPaneWithoutTakingTheFocus() async throws {
+    let runner = FixtureRunner([Data(#"{"id":"cli:pane:split","result":{"type":"pane_info","pane":{"pane_id":"wB:p8","terminal_id":"t8","workspace_id":"wB","tab_id":"wB:t1","focused":false,"agent_status":"unknown","revision":1}}}"#.utf8)])
+    let runtime = HerdrRuntime(runner: runner, incarnationID: "incarnation")
+
+    let created = try await runtime.splitPane(paneID: "wB:p7", direction: .down, workingDirectory: "/private/tmp/project", sessionName: "default")
+
+    #expect(created.paneID == "wB:p8")
+    #expect(created.workspaceID == "wB")
+    #expect(await runner.capturedArguments() == [["--session", "default", "pane", "split", "wB:p7", "--direction", "down", "--cwd", "/private/tmp/project", "--no-focus"]])
+}
+
+@Test func aSplitThatAnswersWithThePaneItWasAskedToSplitIsNotAccepted() async throws {
+    let runner = FixtureRunner([Data(#"{"result":{"type":"pane_info","pane":{"pane_id":"wB:p7","workspace_id":"wB"}}}"#.utf8)])
+    let runtime = HerdrRuntime(runner: runner, incarnationID: "incarnation")
+    await #expect(throws: HerdrRuntimeError.self) { try await runtime.splitPane(paneID: "wB:p7", direction: .right, workingDirectory: "/private/tmp") }
+}
+
 @Test func aTabThatHerdrSaysBelongsToAnotherWorkspaceIsNotAccepted() async throws {
     let runner = FixtureRunner([Data(#"{"result":{"type":"tab_created","root_pane":{"pane_id":"wC:p1","workspace_id":"wC"}}}"#.utf8)])
     let runtime = HerdrRuntime(runner: runner, incarnationID: "incarnation")
