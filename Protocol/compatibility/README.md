@@ -83,3 +83,18 @@ Revision 17 changes no message: it says the Bridge understands the
 `workspace_id` and `pane_id` of the Pane the split made and the same agent
 fields. The new Pane opens where the Pane it came from is. A client that sees an
 older revision keeps the action out of reach instead of having it refused.
+
+Revision 18 adds the `READ_AGENT_USAGE` resource command and `ResourceResult.agent_usage`:
+how much of each agent subscription the Host user has consumed, one `AgentUsage` per agent
+CLI found on the Host, each with the `AgentUsageMeter`s its plan has. The Bridge asks the CLI
+the Host user installed, with the session that installation holds, and sends on percentages,
+amounts and reset instants only: never the account, the session or the CLI's own text. It
+answers at once with the last Reading it holds and leaves `is_final` unset while a fresher one
+is on its way, because a CLI takes seconds and the connection also carries the terminal; a
+Reading is reused for five minutes. Which agents, scopes and meters exist is discovered on the
+Host at each Reading, and a client renders what arrives. An agent read through a door its
+maker does not document says so in `AgentUsage.notice`. One whose reading carries a risk for
+the account behind it arrives as `AGENT_USAGE_NEEDS_CONSENT` and its CLI is never run until
+`SET_AGENT_USAGE_CONSENT` accepts that notice for the Host (`target_id` names the agent,
+`ResourceCommand.consent` is the choice, the Host keeps it and audits it). A client that sees an
+older revision shows no usage.

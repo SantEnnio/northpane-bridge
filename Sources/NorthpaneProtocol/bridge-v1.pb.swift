@@ -579,6 +579,22 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
   /// carries the folders as `path_hits`, the resolved folder in `relative_path` and the folder
   /// above it in `media_type` (empty at the top of a root). No file is named and nothing is read.
   case listHostDirectories // = 19
+
+  /// Reads how much of each agent subscription the Host user has consumed (revision 18), as
+  /// `AgentUsage` in `agent_usage`: one entry per agent CLI found on the Host. The Bridge asks
+  /// the CLI itself, with the session the Host already holds, and sends on percentages, amounts
+  /// and reset instants only — never the account, the session or the CLI's own text. It answers
+  /// at once with the last Reading it holds and never makes the connection wait for a CLI: when
+  /// a fresher Reading is on its way `is_final` is unset, and asking again a moment later
+  /// collects it. A Reading is reused for five minutes, which bounds how often a CLI is run.
+  case readAgentUsage // = 20
+
+  /// Accepts or withdraws, for this Host, what reading one agent implies (revision 18):
+  /// `target_id` names the agent by its `provider_id` and `consent` is the choice. Only an agent
+  /// in the state AGENT_USAGE_NEEDS_CONSENT asks for it; until someone accepts, its CLI is never
+  /// run. The Host keeps the choice, so it holds for every client, and withdrawing it stops the
+  /// Readings and drops what was held. Answered like READ_AGENT_USAGE.
+  case setAgentUsageConsent // = 21
   case UNRECOGNIZED(Int)
 
   init() {
@@ -607,6 +623,8 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
     case 17: self = .captureScreen
     case 18: self = .stagePastedFile
     case 19: self = .listHostDirectories
+    case 20: self = .readAgentUsage
+    case 21: self = .setAgentUsageConsent
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -633,6 +651,8 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
     case .captureScreen: return 17
     case .stagePastedFile: return 18
     case .listHostDirectories: return 19
+    case .readAgentUsage: return 20
+    case .setAgentUsageConsent: return 21
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -659,6 +679,8 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
     .captureScreen,
     .stagePastedFile,
     .listHostDirectories,
+    .readAgentUsage,
+    .setAgentUsageConsent,
   ]
 
 }
@@ -777,6 +799,127 @@ nonisolated enum Northpane_Bridge_V1_ResourceCaptureTargetKind: SwiftProtobuf.En
     .unspecified,
     .captureTargetDisplay,
     .captureTargetWindow,
+  ]
+
+}
+
+nonisolated enum Northpane_Bridge_V1_AgentUsageState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  typealias RawValue = Int
+  case unspecified // = 0
+
+  /// The last attempt produced a Reading: `meters` is what it said.
+  case agentUsageMeasured // = 1
+
+  /// No attempt has finished yet; the first Reading is on its way.
+  case agentUsagePending // = 2
+
+  /// The CLI holds no session: someone has to sign in on the Host.
+  case agentUsageSignedOut // = 3
+
+  /// The session is not a subscription (an API key, a cloud provider): it has no plan to meter.
+  case agentUsageNoPlan // = 4
+
+  /// The CLI answered in a form this Bridge does not read. It stops instead of guessing.
+  case agentUsageUnreadable // = 5
+
+  /// The attempt failed for a reason that may pass: a timeout, the network, a process that died.
+  case agentUsageUnreachable // = 6
+
+  /// The CLI is installed and has never been run: reading it carries a risk only the person
+  /// whose account it is can take, stated in `notice`. SET_AGENT_USAGE_CONSENT answers it.
+  case agentUsageNeedsConsent // = 7
+  case UNRECOGNIZED(Int)
+
+  init() {
+    self = .unspecified
+  }
+
+  init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .agentUsageMeasured
+    case 2: self = .agentUsagePending
+    case 3: self = .agentUsageSignedOut
+    case 4: self = .agentUsageNoPlan
+    case 5: self = .agentUsageUnreadable
+    case 6: self = .agentUsageUnreachable
+    case 7: self = .agentUsageNeedsConsent
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .agentUsageMeasured: return 1
+    case .agentUsagePending: return 2
+    case .agentUsageSignedOut: return 3
+    case .agentUsageNoPlan: return 4
+    case .agentUsageUnreadable: return 5
+    case .agentUsageUnreachable: return 6
+    case .agentUsageNeedsConsent: return 7
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  static let allCases: [Northpane_Bridge_V1_AgentUsageState] = [
+    .unspecified,
+    .agentUsageMeasured,
+    .agentUsagePending,
+    .agentUsageSignedOut,
+    .agentUsageNoPlan,
+    .agentUsageUnreadable,
+    .agentUsageUnreachable,
+    .agentUsageNeedsConsent,
+  ]
+
+}
+
+nonisolated enum Northpane_Bridge_V1_AgentUsageMeterKind: SwiftProtobuf.Enum, Swift.CaseIterable {
+  typealias RawValue = Int
+  case unspecified // = 0
+
+  /// The shorter of the two rolling windows a plan has: a session, five hours.
+  case agentUsageShortWindow // = 1
+
+  /// The longer one: a week.
+  case agentUsageLongWindow // = 2
+
+  /// An allowance of credits counted as used over granted, in `used` and `limit`.
+  case agentUsageCredits // = 3
+  case UNRECOGNIZED(Int)
+
+  init() {
+    self = .unspecified
+  }
+
+  init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .agentUsageShortWindow
+    case 2: self = .agentUsageLongWindow
+    case 3: self = .agentUsageCredits
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .agentUsageShortWindow: return 1
+    case .agentUsageLongWindow: return 2
+    case .agentUsageCredits: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  static let allCases: [Northpane_Bridge_V1_AgentUsageMeterKind] = [
+    .unspecified,
+    .agentUsageShortWindow,
+    .agentUsageLongWindow,
+    .agentUsageCredits,
   ]
 
 }
@@ -1950,6 +2093,11 @@ nonisolated struct Northpane_Bridge_V1_ResourceCommand: @unchecked Sendable {
     set {_uniqueStorage()._targetID = newValue}
   }
 
+  var consent: Bool {
+    get {_storage._consent}
+    set {_uniqueStorage()._consent = newValue}
+  }
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   init() {}
@@ -2080,6 +2228,11 @@ nonisolated struct Northpane_Bridge_V1_ResourceResult: @unchecked Sendable {
     set {_uniqueStorage()._captureTargets = newValue}
   }
 
+  var agentUsage: [Northpane_Bridge_V1_AgentUsage] {
+    get {_storage._agentUsage}
+    set {_uniqueStorage()._agentUsage = newValue}
+  }
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   init() {}
@@ -2149,6 +2302,75 @@ nonisolated struct Northpane_Bridge_V1_ResourceCaptureTarget: Sendable {
   var height: UInt32 = 0
 
   var isFrontmost: Bool = false
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+/// What one agent CLI says of the subscription it is signed in to. `state` is the outcome of the
+/// last attempt and `meters` the last Reading that succeeded, read at `read_unix_seconds` (zero
+/// when there never was one): after a failure the older numbers stay, with their age.
+nonisolated struct Northpane_Bridge_V1_AgentUsage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Chosen by the Bridge and stable: `claude`, `codex`. Not the name of the binary.
+  var providerID: String = String()
+
+  var label: String = String()
+
+  var state: Northpane_Bridge_V1_AgentUsageState = .unspecified
+
+  var readUnixSeconds: Int64 = 0
+
+  var meters: [Northpane_Bridge_V1_AgentUsageMeter] = []
+
+  /// What a person should know of how this agent is read, in English, and where its terms are.
+  /// Empty for an agent read through a door its maker documents: the absence says so.
+  var notice: String = String()
+
+  var noticeURL: String = String()
+
+  /// Set when this agent is read because someone accepted its notice for this Host: the choice
+  /// can be withdrawn with SET_AGENT_USAGE_CONSENT.
+  var consentGiven: Bool = false
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+/// One measured quantity. `scope_id` and `scope_label` name what shares the limit (every model,
+/// one model, one product); two windows of one scope are two meters with the same `scope_id`.
+/// Which scopes and meters exist is discovered at each Reading and no client may depend on it.
+nonisolated struct Northpane_Bridge_V1_AgentUsageMeter: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var scopeID: String = String()
+
+  var scopeLabel: String = String()
+
+  var kind: Northpane_Bridge_V1_AgentUsageMeterKind = .unspecified
+
+  var usedPercent: UInt32 = 0
+
+  /// Set only for credits, as the CLI wrote them: fractional, so they stay text.
+  var used: String = String()
+
+  var limit: String = String()
+
+  /// Zero when the CLI names no reset, which is what an untouched window does.
+  var resetsUnixSeconds: Int64 = 0
+
+  /// Zero when the CLI does not say how long the window is.
+  var windowMinutes: Int64 = 0
+
+  /// Set when the CLI says this scope is the one being consumed now.
+  var inForce: Bool = false
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2336,7 +2558,7 @@ nonisolated extension Northpane_Bridge_V1_TerminalScrollDirection: SwiftProtobuf
 }
 
 nonisolated extension Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf._ProtoNameProviding {
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RESOURCE_COMMAND_KIND_UNSPECIFIED\0\u{1}LIST_RESOURCES\0\u{1}REGISTER_PREVIEW\0\u{1}UPDATE_PREVIEW\0\u{1}CLOSE_PREVIEW\0\u{1}FETCH_PREVIEW_HTTP\0\u{1}PUBLISH_ARTIFACT\0\u{1}READ_ARTIFACT\0\u{1}DELETE_ARTIFACT\0\u{1}LIST_ARTIFACT_ENTRIES\0\u{1}STREAM_PREVIEW_HTTP\0\u{1}OPEN_PREVIEW_WEBSOCKET\0\u{1}SEND_PREVIEW_WEBSOCKET\0\u{1}CLOSE_PREVIEW_WEBSOCKET\0\u{1}READ_WORKSPACE_FILE\0\u{1}SEARCH_WORKSPACE_PATHS\0\u{1}LIST_SCREEN_CAPTURE_TARGETS\0\u{1}CAPTURE_SCREEN\0\u{1}STAGE_PASTED_FILE\0\u{1}LIST_HOST_DIRECTORIES\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RESOURCE_COMMAND_KIND_UNSPECIFIED\0\u{1}LIST_RESOURCES\0\u{1}REGISTER_PREVIEW\0\u{1}UPDATE_PREVIEW\0\u{1}CLOSE_PREVIEW\0\u{1}FETCH_PREVIEW_HTTP\0\u{1}PUBLISH_ARTIFACT\0\u{1}READ_ARTIFACT\0\u{1}DELETE_ARTIFACT\0\u{1}LIST_ARTIFACT_ENTRIES\0\u{1}STREAM_PREVIEW_HTTP\0\u{1}OPEN_PREVIEW_WEBSOCKET\0\u{1}SEND_PREVIEW_WEBSOCKET\0\u{1}CLOSE_PREVIEW_WEBSOCKET\0\u{1}READ_WORKSPACE_FILE\0\u{1}SEARCH_WORKSPACE_PATHS\0\u{1}LIST_SCREEN_CAPTURE_TARGETS\0\u{1}CAPTURE_SCREEN\0\u{1}STAGE_PASTED_FILE\0\u{1}LIST_HOST_DIRECTORIES\0\u{1}READ_AGENT_USAGE\0\u{1}SET_AGENT_USAGE_CONSENT\0")
 }
 
 nonisolated extension Northpane_Bridge_V1_ResourceKind: SwiftProtobuf._ProtoNameProviding {
@@ -2349,6 +2571,14 @@ nonisolated extension Northpane_Bridge_V1_ViewerAvailability: SwiftProtobuf._Pro
 
 nonisolated extension Northpane_Bridge_V1_ResourceCaptureTargetKind: SwiftProtobuf._ProtoNameProviding {
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RESOURCE_CAPTURE_TARGET_KIND_UNSPECIFIED\0\u{1}CAPTURE_TARGET_DISPLAY\0\u{1}CAPTURE_TARGET_WINDOW\0")
+}
+
+nonisolated extension Northpane_Bridge_V1_AgentUsageState: SwiftProtobuf._ProtoNameProviding {
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_USAGE_STATE_UNSPECIFIED\0\u{1}AGENT_USAGE_MEASURED\0\u{1}AGENT_USAGE_PENDING\0\u{1}AGENT_USAGE_SIGNED_OUT\0\u{1}AGENT_USAGE_NO_PLAN\0\u{1}AGENT_USAGE_UNREADABLE\0\u{1}AGENT_USAGE_UNREACHABLE\0\u{1}AGENT_USAGE_NEEDS_CONSENT\0")
+}
+
+nonisolated extension Northpane_Bridge_V1_AgentUsageMeterKind: SwiftProtobuf._ProtoNameProviding {
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_USAGE_METER_KIND_UNSPECIFIED\0\u{1}AGENT_USAGE_SHORT_WINDOW\0\u{1}AGENT_USAGE_LONG_WINDOW\0\u{1}AGENT_USAGE_CREDITS\0")
 }
 
 nonisolated extension Northpane_Bridge_V1_AuthorizationCommandKind: SwiftProtobuf._ProtoNameProviding {
@@ -4374,7 +4604,7 @@ nonisolated extension Northpane_Bridge_V1_HTTPHeader: SwiftProtobuf.Message, Swi
 
 nonisolated extension Northpane_Bridge_V1_ResourceCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ResourceCommand"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{3}command_id\0\u{3}workspace_id\0\u{3}resource_id\0\u{3}expected_revision\0\u{1}path\0\u{1}origin\0\u{1}title\0\u{3}health_path\0\u{3}ttl_seconds\0\u{3}media_type\0\u{1}method\0\u{1}headers\0\u{1}body\0\u{3}idempotency_key\0\u{1}offset\0\u{1}length\0\u{3}stream_id\0\u{3}pane_id\0\u{1}query\0\u{3}target_id\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{3}command_id\0\u{3}workspace_id\0\u{3}resource_id\0\u{3}expected_revision\0\u{1}path\0\u{1}origin\0\u{1}title\0\u{3}health_path\0\u{3}ttl_seconds\0\u{3}media_type\0\u{1}method\0\u{1}headers\0\u{1}body\0\u{3}idempotency_key\0\u{1}offset\0\u{1}length\0\u{3}stream_id\0\u{3}pane_id\0\u{1}query\0\u{3}target_id\0\u{1}consent\0")
 
   fileprivate class _StorageClass {
     var _kind: Northpane_Bridge_V1_ResourceCommandKind = .unspecified
@@ -4398,6 +4628,7 @@ nonisolated extension Northpane_Bridge_V1_ResourceCommand: SwiftProtobuf.Message
     var _paneID: String = String()
     var _query: String = String()
     var _targetID: String = String()
+    var _consent: Bool = false
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -4429,6 +4660,7 @@ nonisolated extension Northpane_Bridge_V1_ResourceCommand: SwiftProtobuf.Message
       _paneID = source._paneID
       _query = source._query
       _targetID = source._targetID
+      _consent = source._consent
     }
   }
 
@@ -4468,6 +4700,7 @@ nonisolated extension Northpane_Bridge_V1_ResourceCommand: SwiftProtobuf.Message
         case 19: try { try decoder.decodeSingularStringField(value: &_storage._paneID) }()
         case 20: try { try decoder.decodeSingularStringField(value: &_storage._query) }()
         case 21: try { try decoder.decodeSingularStringField(value: &_storage._targetID) }()
+        case 22: try { try decoder.decodeSingularBoolField(value: &_storage._consent) }()
         default: break
         }
       }
@@ -4539,6 +4772,9 @@ nonisolated extension Northpane_Bridge_V1_ResourceCommand: SwiftProtobuf.Message
       if !_storage._targetID.isEmpty {
         try visitor.visitSingularStringField(value: _storage._targetID, fieldNumber: 21)
       }
+      if _storage._consent != false {
+        try visitor.visitSingularBoolField(value: _storage._consent, fieldNumber: 22)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -4569,6 +4805,7 @@ nonisolated extension Northpane_Bridge_V1_ResourceCommand: SwiftProtobuf.Message
         if _storage._paneID != rhs_storage._paneID {return false}
         if _storage._query != rhs_storage._query {return false}
         if _storage._targetID != rhs_storage._targetID {return false}
+        if _storage._consent != rhs_storage._consent {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -4660,7 +4897,7 @@ nonisolated extension Northpane_Bridge_V1_ResourceDescriptor: SwiftProtobuf.Mess
 
 nonisolated extension Northpane_Bridge_V1_ResourceResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ResourceResult"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}command_id\0\u{1}resources\0\u{3}status_code\0\u{1}headers\0\u{1}body\0\u{3}relative_path\0\u{3}media_type\0\u{1}deleted\0\u{3}total_bytes\0\u{1}files\0\u{3}stream_id\0\u{1}sequence\0\u{3}is_final\0\u{3}is_text\0\u{3}path_hits\0\u{1}truncated\0\u{3}capture_targets\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}command_id\0\u{1}resources\0\u{3}status_code\0\u{1}headers\0\u{1}body\0\u{3}relative_path\0\u{3}media_type\0\u{1}deleted\0\u{3}total_bytes\0\u{1}files\0\u{3}stream_id\0\u{1}sequence\0\u{3}is_final\0\u{3}is_text\0\u{3}path_hits\0\u{1}truncated\0\u{3}capture_targets\0\u{3}agent_usage\0")
 
   fileprivate class _StorageClass {
     var _commandID: String = String()
@@ -4680,6 +4917,7 @@ nonisolated extension Northpane_Bridge_V1_ResourceResult: SwiftProtobuf.Message,
     var _pathHits: [Northpane_Bridge_V1_ResourcePathHit] = []
     var _truncated: Bool = false
     var _captureTargets: [Northpane_Bridge_V1_ResourceCaptureTarget] = []
+    var _agentUsage: [Northpane_Bridge_V1_AgentUsage] = []
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -4707,6 +4945,7 @@ nonisolated extension Northpane_Bridge_V1_ResourceResult: SwiftProtobuf.Message,
       _pathHits = source._pathHits
       _truncated = source._truncated
       _captureTargets = source._captureTargets
+      _agentUsage = source._agentUsage
     }
   }
 
@@ -4742,6 +4981,7 @@ nonisolated extension Northpane_Bridge_V1_ResourceResult: SwiftProtobuf.Message,
         case 15: try { try decoder.decodeRepeatedMessageField(value: &_storage._pathHits) }()
         case 16: try { try decoder.decodeSingularBoolField(value: &_storage._truncated) }()
         case 17: try { try decoder.decodeRepeatedMessageField(value: &_storage._captureTargets) }()
+        case 18: try { try decoder.decodeRepeatedMessageField(value: &_storage._agentUsage) }()
         default: break
         }
       }
@@ -4801,6 +5041,9 @@ nonisolated extension Northpane_Bridge_V1_ResourceResult: SwiftProtobuf.Message,
       if !_storage._captureTargets.isEmpty {
         try visitor.visitRepeatedMessageField(value: _storage._captureTargets, fieldNumber: 17)
       }
+      if !_storage._agentUsage.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._agentUsage, fieldNumber: 18)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -4827,6 +5070,7 @@ nonisolated extension Northpane_Bridge_V1_ResourceResult: SwiftProtobuf.Message,
         if _storage._pathHits != rhs_storage._pathHits {return false}
         if _storage._truncated != rhs_storage._truncated {return false}
         if _storage._captureTargets != rhs_storage._captureTargets {return false}
+        if _storage._agentUsage != rhs_storage._agentUsage {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -4986,6 +5230,141 @@ nonisolated extension Northpane_Bridge_V1_ResourceCaptureTarget: SwiftProtobuf.M
     if lhs.width != rhs.width {return false}
     if lhs.height != rhs.height {return false}
     if lhs.isFrontmost != rhs.isFrontmost {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Bridge_V1_AgentUsage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".AgentUsage"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0\u{1}label\0\u{1}state\0\u{3}read_unix_seconds\0\u{1}meters\0\u{1}notice\0\u{3}notice_url\0\u{3}consent_given\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.providerID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.label) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.state) }()
+      case 4: try { try decoder.decodeSingularInt64Field(value: &self.readUnixSeconds) }()
+      case 5: try { try decoder.decodeRepeatedMessageField(value: &self.meters) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.notice) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.noticeURL) }()
+      case 8: try { try decoder.decodeSingularBoolField(value: &self.consentGiven) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.providerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerID, fieldNumber: 1)
+    }
+    if !self.label.isEmpty {
+      try visitor.visitSingularStringField(value: self.label, fieldNumber: 2)
+    }
+    if self.state != .unspecified {
+      try visitor.visitSingularEnumField(value: self.state, fieldNumber: 3)
+    }
+    if self.readUnixSeconds != 0 {
+      try visitor.visitSingularInt64Field(value: self.readUnixSeconds, fieldNumber: 4)
+    }
+    if !self.meters.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.meters, fieldNumber: 5)
+    }
+    if !self.notice.isEmpty {
+      try visitor.visitSingularStringField(value: self.notice, fieldNumber: 6)
+    }
+    if !self.noticeURL.isEmpty {
+      try visitor.visitSingularStringField(value: self.noticeURL, fieldNumber: 7)
+    }
+    if self.consentGiven != false {
+      try visitor.visitSingularBoolField(value: self.consentGiven, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Bridge_V1_AgentUsage, rhs: Northpane_Bridge_V1_AgentUsage) -> Bool {
+    if lhs.providerID != rhs.providerID {return false}
+    if lhs.label != rhs.label {return false}
+    if lhs.state != rhs.state {return false}
+    if lhs.readUnixSeconds != rhs.readUnixSeconds {return false}
+    if lhs.meters != rhs.meters {return false}
+    if lhs.notice != rhs.notice {return false}
+    if lhs.noticeURL != rhs.noticeURL {return false}
+    if lhs.consentGiven != rhs.consentGiven {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Bridge_V1_AgentUsageMeter: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".AgentUsageMeter"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}scope_id\0\u{3}scope_label\0\u{1}kind\0\u{3}used_percent\0\u{1}used\0\u{1}limit\0\u{3}resets_unix_seconds\0\u{3}window_minutes\0\u{3}in_force\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.scopeID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.scopeLabel) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.kind) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.usedPercent) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.used) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.limit) }()
+      case 7: try { try decoder.decodeSingularInt64Field(value: &self.resetsUnixSeconds) }()
+      case 8: try { try decoder.decodeSingularInt64Field(value: &self.windowMinutes) }()
+      case 9: try { try decoder.decodeSingularBoolField(value: &self.inForce) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.scopeID.isEmpty {
+      try visitor.visitSingularStringField(value: self.scopeID, fieldNumber: 1)
+    }
+    if !self.scopeLabel.isEmpty {
+      try visitor.visitSingularStringField(value: self.scopeLabel, fieldNumber: 2)
+    }
+    if self.kind != .unspecified {
+      try visitor.visitSingularEnumField(value: self.kind, fieldNumber: 3)
+    }
+    if self.usedPercent != 0 {
+      try visitor.visitSingularUInt32Field(value: self.usedPercent, fieldNumber: 4)
+    }
+    if !self.used.isEmpty {
+      try visitor.visitSingularStringField(value: self.used, fieldNumber: 5)
+    }
+    if !self.limit.isEmpty {
+      try visitor.visitSingularStringField(value: self.limit, fieldNumber: 6)
+    }
+    if self.resetsUnixSeconds != 0 {
+      try visitor.visitSingularInt64Field(value: self.resetsUnixSeconds, fieldNumber: 7)
+    }
+    if self.windowMinutes != 0 {
+      try visitor.visitSingularInt64Field(value: self.windowMinutes, fieldNumber: 8)
+    }
+    if self.inForce != false {
+      try visitor.visitSingularBoolField(value: self.inForce, fieldNumber: 9)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Bridge_V1_AgentUsageMeter, rhs: Northpane_Bridge_V1_AgentUsageMeter) -> Bool {
+    if lhs.scopeID != rhs.scopeID {return false}
+    if lhs.scopeLabel != rhs.scopeLabel {return false}
+    if lhs.kind != rhs.kind {return false}
+    if lhs.usedPercent != rhs.usedPercent {return false}
+    if lhs.used != rhs.used {return false}
+    if lhs.limit != rhs.limit {return false}
+    if lhs.resetsUnixSeconds != rhs.resetsUnixSeconds {return false}
+    if lhs.windowMinutes != rhs.windowMinutes {return false}
+    if lhs.inForce != rhs.inForce {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

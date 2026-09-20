@@ -299,6 +299,11 @@ public enum ResourceCommandKind: String, Codable, Sendable {
     /// Schema revision 16: list the folders inside one folder of the Host, by name, so a place
     /// for a new Workspace can be walked to instead of typed.
     case listHostDirectories
+    /// Schema revision 18: how much of each agent subscription the Host user has consumed, as
+    /// the agent CLIs on the Host report it. Answered at once from the last Reading held.
+    case readAgentUsage
+    /// Schema revision 18: accept or withdraw, for this Host, what reading one agent implies.
+    case setAgentUsageConsent
 }
 public enum ResourceKind: String, Codable, Sendable { case preview, artifact }
 public enum ViewerAvailability: String, Codable, Sendable { case available, none, unknown }
@@ -332,10 +337,14 @@ public struct ResourceCommand: Equatable, Codable, Sendable {
     public let paneID: String
     /// What the operator typed (`searchWorkspacePaths`). `length` caps the number of hits.
     public let query: String
-    /// The capture target chosen from the last listing (`captureScreen`).
+    /// The capture target chosen from the last listing (`captureScreen`), or the agent a
+    /// consent is about, by its `providerID` (`setAgentUsageConsent`).
     public let targetID: String
+    /// The choice `setAgentUsageConsent` carries: accept, or withdraw.
+    public let consent: Bool
 
-    public init(kind: ResourceCommandKind, commandID: UUID = UUID(), workspaceID: String = "", resourceID: UUID? = nil, expectedRevision: Int = 0, path: String = "", origin: String = "", title: String = "", healthPath: String = "/", ttlSeconds: Int = 0, mediaType: String = "", method: String = "GET", headers: [HTTPHeader] = [], body: Data = Data(), idempotencyKey: String = "", offset: Int = 0, length: Int = 0, streamID: UUID? = nil, paneID: String = "", query: String = "", targetID: String = "") {
+    public init(kind: ResourceCommandKind, commandID: UUID = UUID(), workspaceID: String = "", resourceID: UUID? = nil, expectedRevision: Int = 0, path: String = "", origin: String = "", title: String = "", healthPath: String = "/", ttlSeconds: Int = 0, mediaType: String = "", method: String = "GET", headers: [HTTPHeader] = [], body: Data = Data(), idempotencyKey: String = "", offset: Int = 0, length: Int = 0, streamID: UUID? = nil, paneID: String = "", query: String = "", targetID: String = "", consent: Bool = false) {
+        self.consent = consent
         self.kind = kind; self.commandID = commandID; self.workspaceID = workspaceID; self.resourceID = resourceID
         self.expectedRevision = expectedRevision; self.path = path; self.origin = origin; self.title = title
         self.healthPath = healthPath; self.ttlSeconds = ttlSeconds; self.mediaType = mediaType; self.method = method
@@ -384,11 +393,13 @@ public struct ResourceResult: Equatable, Codable, Sendable {
     public let truncated: Bool
     /// What the Host's screen can show (`listScreenCaptureTargets`), displays first.
     public let captureTargets: [ResourceCaptureTarget]
-    public init(commandID: UUID, resources: [ResourceDescriptor] = [], statusCode: Int = 0, headers: [HTTPHeader] = [], body: Data = Data(), relativePath: String = "", mediaType: String = "", deleted: Bool = false, totalBytes: Int = 0, files: [ResourceFile] = [], streamID: UUID? = nil, sequence: Int = 0, isFinal: Bool = false, isText: Bool = false, pathHits: [ResourcePathHit] = [], truncated: Bool = false, captureTargets: [ResourceCaptureTarget] = []) {
+    /// What `readAgentUsage` found, one entry per agent CLI on the Host.
+    public let agentUsage: [AgentUsage]
+    public init(commandID: UUID, resources: [ResourceDescriptor] = [], statusCode: Int = 0, headers: [HTTPHeader] = [], body: Data = Data(), relativePath: String = "", mediaType: String = "", deleted: Bool = false, totalBytes: Int = 0, files: [ResourceFile] = [], streamID: UUID? = nil, sequence: Int = 0, isFinal: Bool = false, isText: Bool = false, pathHits: [ResourcePathHit] = [], truncated: Bool = false, captureTargets: [ResourceCaptureTarget] = [], agentUsage: [AgentUsage] = []) {
         self.commandID = commandID; self.resources = resources; self.statusCode = statusCode; self.headers = headers
         self.body = body; self.relativePath = relativePath; self.mediaType = mediaType; self.deleted = deleted; self.totalBytes = totalBytes; self.files = files
         self.streamID = streamID; self.sequence = sequence; self.isFinal = isFinal; self.isText = isText
-        self.pathHits = pathHits; self.truncated = truncated; self.captureTargets = captureTargets
+        self.pathHits = pathHits; self.truncated = truncated; self.captureTargets = captureTargets; self.agentUsage = agentUsage
     }
 }
 
@@ -431,6 +442,60 @@ public struct ResourceCaptureTarget: Equatable, Codable, Sendable {
     public init(id: String, kind: ResourceCaptureTargetKind, application: String = "", title: String = "", width: Int = 0, height: Int = 0, isFrontmost: Bool = false) {
         self.id = id; self.kind = kind; self.application = application; self.title = title
         self.width = width; self.height = height; self.isFrontmost = isFrontmost
+    }
+}
+
+/// The outcome of the last attempt to read one agent's subscription. Only `measured` and
+/// `pending` take care of themselves; `signedOut` and `noPlan` wait for someone on the Host.
+public enum AgentUsageState: String, Codable, Sendable {
+    case measured, pending, signedOut, noPlan, unreadable, unreachable
+    /// Installed and never run: reading it carries a risk stated in `notice`, for a person to take.
+    case needsConsent
+}
+
+public enum AgentUsageMeterKind: String, Codable, Sendable { case shortWindow, longWindow, credits }
+
+/// What one agent CLI says of the subscription it is signed in to. `meters` is the last Reading
+/// that succeeded and `readAt` when it was taken, so after a failure the older numbers stay.
+public struct AgentUsage: Equatable, Codable, Sendable, Identifiable {
+    /// Chosen by the Bridge and stable (`claude`, `codex`): not the name of the binary.
+    public let providerID: String
+    public let label: String
+    public let state: AgentUsageState
+    public let readAt: Date?
+    public let meters: [AgentUsageMeter]
+    /// What a person should know of how this agent is read, in English, and where its terms
+    /// are. Nil for an agent read through a door its maker documents.
+    public let notice: String?
+    public let noticeURL: String?
+    /// This agent is read because someone accepted its notice for this Host: it can be withdrawn.
+    public let consentGiven: Bool
+    public var id: String { providerID }
+    public init(providerID: String, label: String, state: AgentUsageState, readAt: Date? = nil, meters: [AgentUsageMeter] = [], notice: String? = nil, noticeURL: String? = nil, consentGiven: Bool = false) {
+        self.providerID = providerID; self.label = label; self.state = state; self.readAt = readAt; self.meters = meters
+        self.notice = notice; self.noticeURL = noticeURL; self.consentGiven = consentGiven
+    }
+}
+
+/// One measured quantity. `scopeID` names what shares the limit; two windows of one scope are
+/// two meters. Which scopes and meters exist is discovered at each Reading: render what arrives.
+public struct AgentUsageMeter: Equatable, Codable, Sendable {
+    public let scopeID: String
+    public let scopeLabel: String
+    public let kind: AgentUsageMeterKind
+    public let usedPercent: Int
+    /// Credits only, as the CLI wrote them.
+    public let used: String?
+    public let limit: String?
+    /// Nil when the CLI names no reset, which is what an untouched window does.
+    public let resetsAt: Date?
+    public let windowMinutes: Int?
+    /// The CLI says this scope is the one being consumed now.
+    public let inForce: Bool
+    public init(scopeID: String, scopeLabel: String, kind: AgentUsageMeterKind, usedPercent: Int, used: String? = nil, limit: String? = nil,
+                resetsAt: Date? = nil, windowMinutes: Int? = nil, inForce: Bool = false) {
+        self.scopeID = scopeID; self.scopeLabel = scopeLabel; self.kind = kind; self.usedPercent = usedPercent; self.used = used; self.limit = limit
+        self.resetsAt = resetsAt; self.windowMinutes = windowMinutes; self.inForce = inForce
     }
 }
 

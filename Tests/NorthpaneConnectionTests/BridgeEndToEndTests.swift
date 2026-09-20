@@ -84,6 +84,16 @@ import Testing
     #expect(homeListing.folders.allSatisfy { $0.isDirectory && !$0.relativePath.hasPrefix(".") })
     await #expect(throws: Problem.self) { try await client.listHostDirectories(path: "/etc") }
 
+    // The Host's agent subscriptions (revision 18): answered at once, read behind the answer.
+    // This Host's Codex is `/usr/bin/true`, which says nothing: it is named, with the reason.
+    var agentUsage = try await client.readAgentUsage()
+    #expect(!agentUsage.isSettled)
+    for _ in 0..<600 where !agentUsage.isSettled {
+        try await Task.sleep(for: .milliseconds(100))
+        agentUsage = try await client.readAgentUsage()
+    }
+    #expect(agentUsage.agents.first { $0.providerID == "codex" }?.state == .unreachable)
+
     // A new Pane in the Workspace being observed: a tab of its own, with an agent when asked.
     let pane = try await client.createPane(workspaceID: "workspace-1")
     #expect(pane.workspaceID == "workspace-1")

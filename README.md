@@ -50,6 +50,28 @@ Herdr must be installed on the Host. The Bridge finds it in `~/.local/bin` (Herd
 installer), Homebrew, `/usr/local/bin`, `/usr/bin` or `PATH`, or wherever
 `NORTHPANE_HERDR_EXECUTABLE` points.
 
+## Agent plan usage
+
+When an app asks, the Bridge says how much of the agent subscriptions on the Host has been
+used, by running the CLI you installed with the session it already holds. It has no
+credential of its own, and it sends on percentages, amounts and reset times only: never an
+account, a session or the CLI's own text. A reading is reused for five minutes, by every app
+that reaches the Host (it is kept, numbers only, in
+`~/.northpane/services/agent-usage-readings-v1.json`), and nothing runs while no app is asking.
+What it runs, and nothing else:
+
+- **Claude**: `claude -p "/usage" --output-format json --no-session-persistence --strict-mcp-config`,
+  and `claude auth status` after a failure. No tokens are spent. The output is text meant for a
+  person and can change without notice; when it does, the Bridge stops reading rather than guess.
+- **Codex**: `codex app-server`, asked `account/rateLimits/read` (and `account/read` after a
+  failure), which is its documented interface.
+- **Antigravity**: off until you turn it on from an app, for that Host. `agy` is found by looking
+  at files and is never run before that. Then `agy -p /usage --output-format json`, once per
+  reading, which invokes no model. [Google's Antigravity Additional Terms](https://antigravity.google/terms)
+  restrict third-party software that accesses the service and Google has not said whether this
+  counts, so turning it on is your own decision about your own Google account, and you can
+  withdraw it. The choice is kept in `~/.northpane/services/agent-usage-consent-v1.json`.
+
 ## What is in this repository
 
 - `northpane-bridge`: the Bridge. `northpane-bridge serve --stdio` is what an SSH session

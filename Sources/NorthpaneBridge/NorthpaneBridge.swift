@@ -770,6 +770,12 @@ struct NorthpaneBridge {
                 // A pasted file is typed into the pane as a path the agent then reads: the same
                 // grant as typing, and nothing weaker.
                 case .stagePastedFile: .terminalControl
+                // Percentages and reset instants of the agents a client already watches at
+                // work: no account, no session and none of the CLI's own text leave the Host.
+                case .readAgentUsage: .observeRuntime
+                // It decides what the Host runs under the Host user's own accounts: nothing
+                // weaker than the grant that could type the same command into a Pane.
+                case .setAgentUsageConsent: .terminalControl
                 }
                 do {
                     if let device = authenticatedDevice {
@@ -823,6 +829,10 @@ struct NorthpaneBridge {
                         responsePayload = .resourceResult(.init(commandID: command.commandID, streamID: streamID, isFinal: true))
                     default:
                         responsePayload = .resourceResult(try await context.handleResource(command, transportKind: transport.kind, snapshot: snapshot))
+                        if command.kind == .setAgentUsageConsent {
+                            try? await context.audit(deviceID: authenticatedDevice, category: "agent-usage-consent", reference: command.targetID,
+                                outcome: command.consent ? "accepted" : "withdrawn", reason: "client-requested")
+                        }
                     }
                 } catch let problem as Problem {
                     responsePayload = .problem(problem)
@@ -1107,6 +1117,8 @@ private actor BridgeHostContext {
     /// Uploads of pasted files in flight, one per idempotency key, and where the finished ones land.
     private var pastedUploads = PastedFileAssembly()
     private let pastedFiles = PastedFileStaging()
+    /// The agent CLIs found on this Host, each read through the session its installation holds.
+    private let agentUsage: AgentUsageMonitor
     private var runtime: HerdrRuntime?
     private var herdrServerProcess: Process?
     private var herdrExecutable: URL?
@@ -1118,6 +1130,15 @@ private actor BridgeHostContext {
         let stateDirectory = environment["NORTHPANE_STATE_DIRECTORY"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".northpane", directoryHint: .isDirectory)
         self.stateDirectory = stateDirectory
+        agentUsage = AgentUsageMonitor(discover: {
+            let resolver = AgentExecutableResolver()
+            let claude: (any AgentUsageSurface)? = (try? resolver.resolve(.claude)).map { ClaudeUsageSurface(executable: $0.url) }
+            let codex: (any AgentUsageSurface)? = (try? resolver.resolve(.codex)).map { CodexUsageSurface(executable: $0.url) }
+            // Found by looking at files only: until someone accepts its notice `agy` is never run.
+            let antigravity: (any AgentUsageSurface)? = AntigravityUsageSurface.find().map { AntigravityUsageSurface(executable: $0) }
+            return [claude, codex, antigravity].compactMap { $0 }
+        }, readingsFile: stateDirectory.appending(path: "services/agent-usage-readings-v1.json"),
+           consentFile: stateDirectory.appending(path: "services/agent-usage-consent-v1.json"))
         let identityStore = try HostIdentityKeyStore.standard(stateDirectory: stateDirectory)
         let stored = try await HostIdentityFile.loadOrCreate(
             at: stateDirectory.appending(path: "host-identity.json"),
@@ -1557,6 +1578,15 @@ private actor BridgeHostContext {
             } catch {
                 throw resourceProblem("host_directory_outside_roots")
             }
+        case .readAgentUsage:
+            // Answered from what is held: a CLI takes seconds and this loop also carries the
+            // terminal. `isFinal` unset says a fresher Reading is on its way.
+            let answer = await agentUsage.current()
+            return .init(commandID: command.commandID, isFinal: !answer.refreshing, agentUsage: answer.usage)
+        case .setAgentUsageConsent:
+            guard !command.targetID.isEmpty else { throw Problem.malformedFrame }
+            let answer = try await agentUsage.setConsent(command.consent, providerID: command.targetID)
+            return .init(commandID: command.commandID, isFinal: !answer.refreshing, agentUsage: answer.usage)
         case .listScreenCaptureTargets:
             #if os(macOS)
             // Names and geometry only: the listing reads no pixel. Missing permission is not an

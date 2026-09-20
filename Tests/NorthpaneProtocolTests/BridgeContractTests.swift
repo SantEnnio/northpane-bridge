@@ -149,3 +149,36 @@ import Testing
     }
     #expect(older.bridgeBuildID.isEmpty)
 }
+
+/// Revision 18: what the agent subscriptions say crosses the wire whole, and what a CLI did not
+/// say — a reset, a duration, an amount, a Reading that never happened — comes back as absent.
+@Test func agentUsageRoundTripsThroughSchemaRevisionEighteen() throws {
+    let usage = [
+        AgentUsage(providerID: "claude", label: "Claude", state: .measured, readAt: Date(timeIntervalSince1970: 1_790_000_000), meters: [
+            .init(scopeID: "subscription", scopeLabel: "All models", kind: .shortWindow, usedPercent: 0, inForce: true),
+            .init(scopeID: "model:fable", scopeLabel: "Fable", kind: .longWindow, usedPercent: 88, resetsAt: Date(timeIntervalSince1970: 1_790_400_000)),
+        ]),
+        AgentUsage(providerID: "codex", label: "Codex", state: .unreachable, readAt: Date(timeIntervalSince1970: 1_789_000_000), meters: [
+            .init(scopeID: "codex", scopeLabel: "Codex and Work", kind: .credits, usedPercent: 70, used: "699.7", limit: "1000",
+                  resetsAt: Date(timeIntervalSince1970: 1_790_812_801), windowMinutes: nil, inForce: true),
+            .init(scopeID: "codex", scopeLabel: "Codex and Work", kind: .longWindow, usedPercent: 100, windowMinutes: 10_080),
+        ]),
+        AgentUsage(providerID: "new", label: "New", state: .pending, consentGiven: true),
+        AgentUsage(providerID: "guarded", label: "Guarded", state: .needsConsent, notice: "What accepting means.", noticeURL: "https://example.com/terms"),
+    ]
+    let result = ResourceResult(commandID: UUID(), isFinal: false, agentUsage: usage)
+    let envelope = Envelope(connectionID: ConnectionID(), channelID: ChannelID(), payload: .resourceResult(result))
+    guard case let .resourceResult(decoded) = try FrameCodec.decode(FrameCodec.encode(envelope)).payload else {
+        Issue.record("Expected the resource result back")
+        return
+    }
+    #expect(decoded.agentUsage == usage)
+    #expect(!decoded.isFinal)
+
+    let consent = ResourceCommand(kind: .setAgentUsageConsent, targetID: "guarded", consent: true)
+    guard case let .resourceCommand(command) = try FrameCodec.decode(FrameCodec.encode(Envelope(connectionID: ConnectionID(), channelID: ChannelID(), payload: .resourceCommand(consent)))).payload else {
+        Issue.record("Expected the resource command back")
+        return
+    }
+    #expect(command.kind == .setAgentUsageConsent && command.targetID == "guarded" && command.consent)
+}

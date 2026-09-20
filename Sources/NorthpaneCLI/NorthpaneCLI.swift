@@ -39,6 +39,9 @@ private struct CommandRunner {
         if Array(arguments.prefix(2)) == ["auth", "github"] {
             return try await runGitHubAuthorization(arguments, client: client)
         }
+        if arguments[0] == "usage" {
+            return try await runAgentUsage(arguments, client: client)
+        }
         let snapshot = try await client.observe()
         let command = try makeCommand(arguments, snapshot: snapshot)
         let result = try await client.performResourceCommand(command)
@@ -50,6 +53,44 @@ private struct CommandRunner {
         let resourceKind: ResourceKind? = Array(arguments.prefix(2)) == ["preview", "list"] ? .preview
             : (Array(arguments.prefix(2)) == ["artifact", "list"] ? .artifact : nil)
         return try output(result, json: arguments.contains("--json"), resourceKind: resourceKind)
+    }
+
+    /// `usage` prints what the agent subscriptions on this Host say; `--enable <agent>` and
+    /// `--disable <agent>` accept or withdraw, from the Host itself, what reading one implies.
+    private func runAgentUsage(_ arguments: [String], client: NorthpaneBridgeClient) async throws -> Data {
+        var usage: HostAgentUsage
+        if let agent = optionalValue("--enable", in: arguments) {
+            usage = try await client.setAgentUsageConsent(true, providerID: agent)
+        } else if let agent = optionalValue("--disable", in: arguments) {
+            usage = try await client.setAgentUsageConsent(false, providerID: agent)
+        } else {
+            usage = try await client.readAgentUsage()
+        }
+        // The Bridge answers at once and reads behind the answer: wait for what it is reading.
+        for _ in 0..<240 where !usage.isSettled {
+            try await Task.sleep(for: .milliseconds(500))
+            usage = try await client.readAgentUsage()
+        }
+        if arguments.contains("--json") {
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
+            return try encoder.encode(usage.agents) + Data("\n".utf8)
+        }
+        guard !usage.agents.isEmpty else { return Data("No agent CLI was found on this Host.\n".utf8) }
+        let formatter = ISO8601DateFormatter()
+        var lines: [String] = []
+        for agent in usage.agents {
+            lines.append("\(agent.label) (\(agent.providerID)): \(agent.state.rawValue)" + (agent.readAt.map { ", read \(formatter.string(from: $0))" } ?? ""))
+            for meter in agent.meters {
+                let amount = meter.used.flatMap { used in meter.limit.map { " (\(used) of \($0))" } } ?? ""
+                let reset = meter.resetsAt.map { ", resets \(formatter.string(from: $0))" } ?? ""
+                lines.append("  \(meter.scopeLabel), \(meter.kind.rawValue): \(meter.usedPercent)% used\(amount)\(reset)")
+            }
+            if agent.state == .needsConsent {
+                lines.append("  Off. \(agent.notice ?? "")" + (agent.noticeURL.map { " \($0)" } ?? ""))
+                lines.append("  To accept that for this Host: northpane usage --enable \(agent.providerID)")
+            }
+        }
+        return Data((lines.joined(separator: "\n") + "\n").utf8)
     }
 
     private func runGitHubAuthorization(_ arguments: [String], client: NorthpaneBridgeClient) async throws -> Data {
@@ -310,7 +351,7 @@ private enum CLIError: Error {
     var exitCode: Int32 { switch self { case .usage: 2; case .connection: 3; case .workspace, .authorization: 4 } }
     var message: String {
         switch self {
-        case .usage: "usage: northpane status | preview status|server|list|close | artifact publish|list|read|delete | auth github | mcp [--json]"
+        case .usage: "usage: northpane status | usage [--enable|--disable <agent>] | preview status|server|list|close | artifact publish|list|read|delete | auth github | mcp [--json]"
         case .connection: "Northpane Bridge is unavailable"
         case .workspace: "the path must belong to a current Herdr worktree (or pass --workspace)"
         case let .authorization(detail): "GitHub authorization did not complete: \(detail)"

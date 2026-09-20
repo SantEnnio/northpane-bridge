@@ -53,6 +53,14 @@ public struct HostFolderListing: Equatable, Sendable {
     }
 }
 
+/// What the agent subscriptions on one Host say of themselves, as the Host last read them.
+public struct HostAgentUsage: Equatable, Sendable {
+    public let agents: [AgentUsage]
+    /// False while the Host is reading again: what is here is the older Reading.
+    public let isSettled: Bool
+    public init(agents: [AgentUsage], isSettled: Bool) { self.agents = agents; self.isSettled = isSettled }
+}
+
 /// One thing the Host's screen can show. `id` is opaque and valid until the next listing.
 public struct ScreenCaptureTarget: Equatable, Hashable, Sendable, Identifiable {
     public enum Kind: Equatable, Hashable, Sendable { case display, window }
@@ -244,6 +252,25 @@ public actor NorthpaneBridgeClient {
         return .init(directory: result.relativePath ?? "", parent: (result.mediaType ?? "").isEmpty ? nil : result.mediaType,
                      folders: result.pathHits.map { .init(path: $0.path, relativePath: $0.relativePath, rootLabel: $0.rootLabel, isDirectory: true, byteCount: 0, modified: nil) },
                      truncated: result.truncated)
+    }
+
+    /// How much of each agent subscription the Host user has consumed, one entry per agent CLI
+    /// on the Host. The Host answers at once with the last Reading it holds; `isSettled` unset
+    /// says a fresher one is on its way and asking again a moment later collects it. Needs
+    /// schema revision 18; an older Bridge has no such command and is refused locally.
+    public func readAgentUsage(channelID: ChannelID = ChannelID()) async throws -> HostAgentUsage {
+        guard let accepted, accepted.schemaRevision >= 18 else { throw Problem.incompatibleProtocol }
+        let result = try await performResourceCommand(.init(kind: .readAgentUsage), channelID: channelID)
+        return .init(agents: result.agentUsage, isSettled: result.isFinal)
+    }
+
+    /// Accepts or withdraws, for the Host, what reading one agent implies: asked only by an agent
+    /// in the state `needsConsent`, whose `notice` says what is being accepted. The Host keeps
+    /// the choice, so it holds for every client. Needs schema revision 18.
+    public func setAgentUsageConsent(_ granted: Bool, providerID: String, channelID: ChannelID = ChannelID()) async throws -> HostAgentUsage {
+        guard let accepted, accepted.schemaRevision >= 18 else { throw Problem.incompatibleProtocol }
+        let result = try await performResourceCommand(.init(kind: .setAgentUsageConsent, targetID: providerID, consent: granted), channelID: channelID)
+        return .init(agents: result.agentUsage, isSettled: result.isFinal)
     }
 
     /// Stages a file the operator pasted on the Host, sent in frame-sized chunks under one

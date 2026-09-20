@@ -245,7 +245,7 @@ enum BridgeWireMapper {
         result.ttlSeconds = try uint64(value.ttlSeconds); result.mediaType = value.mediaType; result.method = value.method
         result.headers = value.headers.map(encode); result.body = value.body; result.idempotencyKey = value.idempotencyKey
         result.offset = try uint64(value.offset); result.length = try uint64(value.length); result.streamID = value.streamID?.uuidString ?? ""; result.paneID = value.paneID; result.query = value.query
-        result.targetID = value.targetID
+        result.targetID = value.targetID; result.consent = value.consent
         return result
     }
     private static func decode(_ value: Northpane_Bridge_V1_ResourceCommand) throws -> ResourceCommand {
@@ -258,7 +258,7 @@ enum BridgeWireMapper {
             healthPath: value.healthPath, ttlSeconds: try integer(value.ttlSeconds), mediaType: value.mediaType,
             method: value.method, headers: value.headers.map(decode), body: value.body, idempotencyKey: value.idempotencyKey,
             offset: try integer(value.offset), length: try integer(value.length), streamID: streamID, paneID: value.paneID,
-            query: value.query, targetID: value.targetID)
+            query: value.query, targetID: value.targetID, consent: value.consent)
     }
     private static func encode(_ value: HTTPHeader) -> Northpane_Bridge_V1_HTTPHeader { var result = Northpane_Bridge_V1_HTTPHeader(); result.name = value.name; result.value = value.value; return result }
     private static func decode(_ value: Northpane_Bridge_V1_HTTPHeader) -> HTTPHeader { HTTPHeader(name: value.name, value: value.value) }
@@ -282,7 +282,7 @@ enum BridgeWireMapper {
         result.totalBytes = try uint64(value.totalBytes); result.files = try value.files.map(encode); result.streamID = value.streamID?.uuidString ?? ""
         result.sequence = try uint64(value.sequence); result.isFinal = value.isFinal; result.isText = value.isText
         result.pathHits = try value.pathHits.map(encode); result.truncated = value.truncated
-        result.captureTargets = try value.captureTargets.map(encode); return result
+        result.captureTargets = try value.captureTargets.map(encode); result.agentUsage = try value.agentUsage.map(encode); return result
     }
     private static func decode(_ value: Northpane_Bridge_V1_ResourceResult) throws -> ResourceResult {
         guard let command = UUID(uuidString: value.commandID) else { throw Problem.malformedFrame }
@@ -293,7 +293,7 @@ enum BridgeWireMapper {
             totalBytes: try integer(value.totalBytes), files: try value.files.map(decode), streamID: streamID,
             sequence: try integer(value.sequence), isFinal: value.isFinal, isText: value.isText,
             pathHits: try value.pathHits.map(decode), truncated: value.truncated,
-            captureTargets: try value.captureTargets.map(decode))
+            captureTargets: try value.captureTargets.map(decode), agentUsage: try value.agentUsage.map(decode))
     }
     private static func encode(_ value: ResourceFile) throws -> Northpane_Bridge_V1_ResourceFile { var result = Northpane_Bridge_V1_ResourceFile(); result.relativePath = value.relativePath; result.byteCount = try uint64(value.byteCount); result.contentDigest = value.contentDigest; return result }
     private static func decode(_ value: Northpane_Bridge_V1_ResourceFile) throws -> ResourceFile { ResourceFile(relativePath: value.relativePath, byteCount: try integer(value.byteCount), contentDigest: value.contentDigest) }
@@ -320,6 +320,35 @@ enum BridgeWireMapper {
         let kind: ResourceCaptureTargetKind = switch value.kind { case .captureTargetDisplay: .display; case .captureTargetWindow: .window; default: throw Problem.malformedFrame }
         return ResourceCaptureTarget(id: value.id, kind: kind, application: value.application, title: value.title,
             width: try integer(value.width), height: try integer(value.height), isFrontmost: value.isFrontmost)
+    }
+
+    private static func encode(_ value: AgentUsage) throws -> Northpane_Bridge_V1_AgentUsage {
+        var result = Northpane_Bridge_V1_AgentUsage(); result.providerID = value.providerID; result.label = value.label
+        result.state = switch value.state { case .measured: .agentUsageMeasured; case .pending: .agentUsagePending; case .signedOut: .agentUsageSignedOut; case .noPlan: .agentUsageNoPlan; case .unreadable: .agentUsageUnreadable; case .unreachable: .agentUsageUnreachable; case .needsConsent: .agentUsageNeedsConsent }
+        result.notice = value.notice ?? ""; result.noticeURL = value.noticeURL ?? ""; result.consentGiven = value.consentGiven
+        // Zero means "never": a Host that has not managed a Reading yet still names the agent.
+        result.readUnixSeconds = value.readAt.map { Int64($0.timeIntervalSince1970) } ?? 0
+        result.meters = try value.meters.map { meter in
+            var wire = Northpane_Bridge_V1_AgentUsageMeter(); wire.scopeID = meter.scopeID; wire.scopeLabel = meter.scopeLabel
+            wire.kind = switch meter.kind { case .shortWindow: .agentUsageShortWindow; case .longWindow: .agentUsageLongWindow; case .credits: .agentUsageCredits }
+            wire.usedPercent = try uint32(meter.usedPercent); wire.used = meter.used ?? ""; wire.limit = meter.limit ?? ""
+            wire.resetsUnixSeconds = meter.resetsAt.map { Int64($0.timeIntervalSince1970) } ?? 0
+            wire.windowMinutes = Int64(meter.windowMinutes ?? 0); wire.inForce = meter.inForce
+            return wire
+        }
+        return result
+    }
+    private static func decode(_ value: Northpane_Bridge_V1_AgentUsage) throws -> AgentUsage {
+        let state: AgentUsageState = switch value.state { case .agentUsageMeasured: .measured; case .agentUsagePending: .pending; case .agentUsageSignedOut: .signedOut; case .agentUsageNoPlan: .noPlan; case .agentUsageUnreadable: .unreadable; case .agentUsageUnreachable: .unreachable; case .agentUsageNeedsConsent: .needsConsent; default: throw Problem.malformedFrame }
+        return AgentUsage(providerID: value.providerID, label: value.label, state: state,
+            readAt: value.readUnixSeconds == 0 ? nil : Date(timeIntervalSince1970: Double(value.readUnixSeconds)),
+            meters: try value.meters.map { wire in
+                let kind: AgentUsageMeterKind = switch wire.kind { case .agentUsageShortWindow: .shortWindow; case .agentUsageLongWindow: .longWindow; case .agentUsageCredits: .credits; default: throw Problem.malformedFrame }
+                return AgentUsageMeter(scopeID: wire.scopeID, scopeLabel: wire.scopeLabel, kind: kind, usedPercent: try integer(wire.usedPercent),
+                    used: wire.used.isEmpty ? nil : wire.used, limit: wire.limit.isEmpty ? nil : wire.limit,
+                    resetsAt: wire.resetsUnixSeconds == 0 ? nil : Date(timeIntervalSince1970: Double(wire.resetsUnixSeconds)),
+                    windowMinutes: wire.windowMinutes == 0 ? nil : Int(wire.windowMinutes), inForce: wire.inForce)
+            }, notice: value.notice.isEmpty ? nil : value.notice, noticeURL: value.noticeURL.isEmpty ? nil : value.noticeURL, consentGiven: value.consentGiven)
     }
 
     private static func encode(_ value: AuthorizationCommand) throws -> Northpane_Bridge_V1_AuthorizationCommand {
@@ -421,8 +450,8 @@ enum BridgeWireMapper {
     private static func decode(_ value: Northpane_Bridge_V1_WorkspaceAgentKind) throws -> WorkspaceAgentKind { switch value { case .workspaceAgentUnspecified, .workspaceAgentShell: .shell; case .workspaceAgentCodex: .codex; case .workspaceAgentClaude: .claude; case .workspaceAgentOpencode: .openCode; default: throw Problem.malformedFrame } }
     private static func encode(_ value: TerminalAttachMode) -> Northpane_Bridge_V1_TerminalAttachMode { switch value { case .observe: .terminalAttachObserve; case .control: .terminalAttachControl; case .takeover: .terminalAttachTakeover } }
     private static func decode(_ value: Northpane_Bridge_V1_TerminalAttachMode) throws -> TerminalAttachMode { switch value { case .terminalAttachObserve: .observe; case .terminalAttachControl: .control; case .terminalAttachTakeover: .takeover; default: throw Problem.malformedFrame } }
-    private static func encode(_ value: ResourceCommandKind) -> Northpane_Bridge_V1_ResourceCommandKind { switch value { case .listResources: .listResources; case .registerPreview: .registerPreview; case .updatePreview: .updatePreview; case .closePreview: .closePreview; case .fetchPreviewHTTP: .fetchPreviewHTTP; case .publishArtifact: .publishArtifact; case .readArtifact: .readArtifact; case .deleteArtifact: .deleteArtifact; case .listArtifactEntries: .listArtifactEntries; case .streamPreviewHTTP: .streamPreviewHTTP; case .openPreviewWebSocket: .openPreviewWebsocket; case .sendPreviewWebSocket: .sendPreviewWebsocket; case .closePreviewWebSocket: .closePreviewWebsocket; case .readWorkspaceFile: .readWorkspaceFile; case .searchWorkspacePaths: .searchWorkspacePaths; case .listScreenCaptureTargets: .listScreenCaptureTargets; case .captureScreen: .captureScreen; case .stagePastedFile: .stagePastedFile; case .listHostDirectories: .listHostDirectories } }
-    private static func decode(_ value: Northpane_Bridge_V1_ResourceCommandKind) throws -> ResourceCommandKind { switch value { case .listResources: .listResources; case .registerPreview: .registerPreview; case .updatePreview: .updatePreview; case .closePreview: .closePreview; case .fetchPreviewHTTP: .fetchPreviewHTTP; case .publishArtifact: .publishArtifact; case .readArtifact: .readArtifact; case .deleteArtifact: .deleteArtifact; case .listArtifactEntries: .listArtifactEntries; case .streamPreviewHTTP: .streamPreviewHTTP; case .openPreviewWebsocket: .openPreviewWebSocket; case .sendPreviewWebsocket: .sendPreviewWebSocket; case .closePreviewWebsocket: .closePreviewWebSocket; case .readWorkspaceFile: .readWorkspaceFile; case .searchWorkspacePaths: .searchWorkspacePaths; case .listScreenCaptureTargets: .listScreenCaptureTargets; case .captureScreen: .captureScreen; case .stagePastedFile: .stagePastedFile; case .listHostDirectories: .listHostDirectories; default: throw Problem.malformedFrame } }
+    private static func encode(_ value: ResourceCommandKind) -> Northpane_Bridge_V1_ResourceCommandKind { switch value { case .listResources: .listResources; case .registerPreview: .registerPreview; case .updatePreview: .updatePreview; case .closePreview: .closePreview; case .fetchPreviewHTTP: .fetchPreviewHTTP; case .publishArtifact: .publishArtifact; case .readArtifact: .readArtifact; case .deleteArtifact: .deleteArtifact; case .listArtifactEntries: .listArtifactEntries; case .streamPreviewHTTP: .streamPreviewHTTP; case .openPreviewWebSocket: .openPreviewWebsocket; case .sendPreviewWebSocket: .sendPreviewWebsocket; case .closePreviewWebSocket: .closePreviewWebsocket; case .readWorkspaceFile: .readWorkspaceFile; case .searchWorkspacePaths: .searchWorkspacePaths; case .listScreenCaptureTargets: .listScreenCaptureTargets; case .captureScreen: .captureScreen; case .stagePastedFile: .stagePastedFile; case .listHostDirectories: .listHostDirectories; case .readAgentUsage: .readAgentUsage; case .setAgentUsageConsent: .setAgentUsageConsent } }
+    private static func decode(_ value: Northpane_Bridge_V1_ResourceCommandKind) throws -> ResourceCommandKind { switch value { case .listResources: .listResources; case .registerPreview: .registerPreview; case .updatePreview: .updatePreview; case .closePreview: .closePreview; case .fetchPreviewHTTP: .fetchPreviewHTTP; case .publishArtifact: .publishArtifact; case .readArtifact: .readArtifact; case .deleteArtifact: .deleteArtifact; case .listArtifactEntries: .listArtifactEntries; case .streamPreviewHTTP: .streamPreviewHTTP; case .openPreviewWebsocket: .openPreviewWebSocket; case .sendPreviewWebsocket: .sendPreviewWebSocket; case .closePreviewWebsocket: .closePreviewWebSocket; case .readWorkspaceFile: .readWorkspaceFile; case .searchWorkspacePaths: .searchWorkspacePaths; case .listScreenCaptureTargets: .listScreenCaptureTargets; case .captureScreen: .captureScreen; case .stagePastedFile: .stagePastedFile; case .listHostDirectories: .listHostDirectories; case .readAgentUsage: .readAgentUsage; case .setAgentUsageConsent: .setAgentUsageConsent; default: throw Problem.malformedFrame } }
     private static func encode(_ value: ResourceKind) -> Northpane_Bridge_V1_ResourceKind { switch value { case .preview: .previewResource; case .artifact: .artifactResource } }
     private static func decode(_ value: Northpane_Bridge_V1_ResourceKind) throws -> ResourceKind { switch value { case .previewResource: .preview; case .artifactResource: .artifact; default: throw Problem.malformedFrame } }
     private static func encode(_ value: ViewerAvailability) -> Northpane_Bridge_V1_ViewerAvailability { switch value { case .available: .viewerAvailable; case .none: .viewerNone; case .unknown: .viewerUnknown } }
