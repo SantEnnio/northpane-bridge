@@ -294,7 +294,8 @@ public enum ResourceCommandKind: String, Codable, Sendable {
     case captureScreen
     /// Schema revision 12: stage a file the operator pasted, sent in ordered chunks under one
     /// idempotency key, under the Host user's temporary folder; the last chunk is answered with
-    /// the absolute path an agent reads it from.
+    /// the absolute path an agent reads it from. Revision 19: with a file name in `path`, any
+    /// file the operator sent, under that name.
     case stagePastedFile
     /// Schema revision 16: list the folders inside one folder of the Host, by name, so a place
     /// for a new Workspace can be walked to instead of typed.

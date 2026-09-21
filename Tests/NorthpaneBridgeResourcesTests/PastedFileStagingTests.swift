@@ -86,3 +86,66 @@ private func temporaryDirectory() -> URL {
     #expect(try assembly.append(uploadID: "u6", offset: 0, totalBytes: whole.count, chunk: Data(first), now: start.addingTimeInterval(120)) == nil)
     #expect(assembly.pendingUploads == 1)
 }
+
+@Test func aSentFileKeepsItsNameInAFolderOfItsOwnWhateverItsBytes() throws {
+    let directory = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var uploads = SentFileUploads(staging: PastedFileStaging(directory: directory))
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let script = Data("#!/bin/sh\necho hello\n".utf8)
+
+    #expect(try uploads.append(uploadID: "u1", name: "run.sh", offset: 0, totalBytes: script.count, chunk: script.prefix(10), now: now) == nil)
+    // Nothing is held in memory: the bytes so far are already on disk, in a hidden partial file.
+    #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).allSatisfy { $0.hasPrefix(".partial-") })
+    let staged = try #require(try uploads.append(uploadID: "u1", name: "run.sh", offset: 10, totalBytes: script.count, chunk: script.dropFirst(10), now: now))
+    #expect(staged.path.hasPrefix(directory.path + "/sent-") && staged.path.hasSuffix("/run.sh"))
+    #expect(staged.mediaType == "application/octet-stream" && staged.byteCount == script.count)
+    #expect(try Data(contentsOf: URL(fileURLWithPath: staged.path)) == script)
+    #expect(uploads.pendingUploads == 0)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path) == [URL(fileURLWithPath: staged.path).deletingLastPathComponent().lastPathComponent])
+
+    // An image sent by name keeps its name and still says what it is.
+    let image = try #require(try uploads.append(uploadID: "u2", name: "shot.png", offset: 0, totalBytes: png.count, chunk: png, now: now))
+    #expect(image.mediaType == "image/png" && image.path.hasSuffix("/shot.png"))
+}
+
+@Test func aSentFileNameLosesWhatCouldLeaveTheFolder() {
+    #expect(SentFileUploads.sanitizedName("report.csv") == "report.csv")
+    #expect(SentFileUploads.sanitizedName("../../etc/passwd") == "passwd")
+    #expect(SentFileUploads.sanitizedName("C:\\Users\\me\\notes.txt") == "notes.txt")
+    #expect(SentFileUploads.sanitizedName("a\u{0}b\nc:d?.txt") == "a_b_c_d_.txt")
+    #expect(SentFileUploads.sanitizedName("trailing. . ") == "trailing")
+    #expect(SentFileUploads.sanitizedName("..") == nil)
+    #expect(SentFileUploads.sanitizedName("/") == nil)
+    #expect(SentFileUploads.sanitizedName("") == nil)
+    let long = String(repeating: "è", count: 300) + ".tar.gz"
+    let kept = SentFileUploads.sanitizedName(long)
+    #expect(kept?.hasSuffix(".gz") == true && (kept?.utf8.count ?? .max) <= SentFileUploads.maximumNameBytes)
+}
+
+@Test func aSentFileThatIsCancelledTooLargeOrOutOfOrderLeavesNothing() throws {
+    let directory = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var uploads = SentFileUploads(staging: PastedFileStaging(directory: directory), expiry: 60)
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let chunk = Data(repeating: 7, count: 100)
+
+    _ = try uploads.append(uploadID: "c", name: "big.bin", offset: 0, totalBytes: 300, chunk: chunk, now: now)
+    uploads.cancel(uploadID: "c")
+    #expect(uploads.pendingUploads == 0)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+
+    #expect(throws: PastedFileError.tooLarge) { try uploads.append(uploadID: "t", name: "huge.bin", offset: 0, totalBytes: SentFileUploads.maximumBytes + 1, chunk: chunk, now: now) }
+    #expect(throws: PastedFileError.invalidName) { try uploads.append(uploadID: "n", name: "..", offset: 0, totalBytes: 100, chunk: chunk, now: now) }
+    #expect(throws: PastedFileError.invalidChunk) { try uploads.append(uploadID: "o", name: "a.bin", offset: 50, totalBytes: 300, chunk: chunk, now: now) }
+
+    _ = try uploads.append(uploadID: "s", name: "skip.bin", offset: 0, totalBytes: 300, chunk: chunk, now: now)
+    #expect(throws: PastedFileError.invalidChunk) { try uploads.append(uploadID: "s", name: "skip.bin", offset: 200, totalBytes: 300, chunk: chunk, now: now) }
+    #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+
+    // One nobody finishes is dropped with its partial file once the expiry passes.
+    _ = try uploads.append(uploadID: "e", name: "left.bin", offset: 0, totalBytes: 300, chunk: chunk, now: now)
+    #expect(throws: PastedFileError.invalidChunk) { try uploads.append(uploadID: "e", name: "left.bin", offset: 100, totalBytes: 300, chunk: chunk, now: now.addingTimeInterval(61)) }
+    #expect(uploads.pendingUploads == 0)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+}

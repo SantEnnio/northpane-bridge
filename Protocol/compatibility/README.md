@@ -98,3 +98,11 @@ the account behind it arrives as `AGENT_USAGE_NEEDS_CONSENT` and its CLI is neve
 `SET_AGENT_USAGE_CONSENT` accepts that notice for the Host (`target_id` names the agent,
 `ResourceCommand.consent` is the choice, the Host keeps it and audits it). A client that sees an
 older revision shows no usage.
+
+Revision 19 changes no field: it widens `STAGE_PASTED_FILE`. A chunk whose `path`
+carries a file name sends that file by name, whatever its bytes: the Host keeps the
+name once separators and control characters are gone, caps the file at 256 MiB,
+writes the chunks to a hidden partial file as they arrive and moves the finished
+file to `sent-<time>-<digest>/<name>` in the same staging folder, pruned with the
+pasted files. `length` 0 with the same `idempotency_key` cancels an upload. A
+client that sees an older revision sends only images and PDFs, by their bytes.

@@ -571,6 +571,9 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
   /// READ_WORKSPACE_FILE serves from, never the workspace — and answers the last chunk with the
   /// absolute path in `relative_path`, `media_type` and `total_bytes`, `is_final` set; an
   /// earlier chunk answers with the bytes received so far in `total_bytes`.
+  /// Revision 19: a chunk whose `path` carries a file name sends that file by name, whatever its
+  /// bytes, capped at 256 MiB; it lands as `sent-<time>-<digest>/<name>` in the same folder, and
+  /// `length` 0 with the same `idempotency_key` cancels it.
   case stagePastedFile // = 18
 
   /// Lists the folders inside the folder named by `path` (revision 16); empty means the Host

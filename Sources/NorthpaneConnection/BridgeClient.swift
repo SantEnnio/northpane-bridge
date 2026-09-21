@@ -295,6 +295,45 @@ public actor NorthpaneBridgeClient {
         throw Problem.malformedFrame
     }
 
+    /// Sends one file the operator chose, whatever its type, under its own name, and answers with
+    /// the absolute path an agent reads it from. The file is read from disk a chunk at a time, so
+    /// a large one never sits whole in memory, and the chunks are smaller than a pasted image's so
+    /// keystrokes sharing the connection wait less behind each. `progress` hears the bytes the
+    /// Host has confirmed. Cancelling the task tells the Host to drop what it received. Needs
+    /// schema revision 19; an older Bridge takes only pasted images and PDFs.
+    public func sendFile(at url: URL, name: String, paneID: String, workspaceID: String, channelID: ChannelID = ChannelID(),
+                         progress: @Sendable (Int, Int) -> Void = { _, _ in }) async throws -> StagedHostFile {
+        guard let accepted, accepted.schemaRevision >= 19 else { throw Problem.incompatibleProtocol }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let total = Int(try handle.seekToEnd())
+        try handle.seek(toOffset: 0)
+        guard total > 0 else { throw Problem.malformedFrame }
+        let uploadID = UUID().uuidString
+        let chunkSize = 256 * 1_024
+        var offset = 0
+        do {
+            while offset < total {
+                try Task.checkCancellation()
+                guard let chunk = try handle.read(upToCount: min(chunkSize, total - offset)), !chunk.isEmpty else { throw Problem.malformedFrame }
+                let result = try await performResourceCommand(.init(kind: .stagePastedFile, workspaceID: workspaceID, path: name, body: chunk, idempotencyKey: uploadID, offset: offset, length: total, paneID: paneID), channelID: channelID)
+                offset += chunk.count
+                progress(offset, total)
+                if offset == total {
+                    guard result.isFinal, !result.relativePath.isEmpty else { throw Problem.malformedFrame }
+                    return StagedHostFile(path: result.relativePath, mediaType: result.mediaType, byteCount: result.totalBytes)
+                }
+                guard result.totalBytes == offset else { throw Problem.malformedFrame }
+            }
+        } catch is CancellationError {
+            if offset > 0 {
+                _ = try? await performResourceCommand(.init(kind: .stagePastedFile, workspaceID: workspaceID, path: name, idempotencyKey: uploadID, paneID: paneID), channelID: channelID)
+            }
+            throw CancellationError()
+        }
+        throw Problem.malformedFrame
+    }
+
     /// Lists the Host's displays and on-screen windows, names and sizes only. Needs schema
     /// revision 8; an older Bridge has no such command and is refused locally.
     public func listScreenCaptureTargets(paneID: String, workspaceID: String, channelID: ChannelID = ChannelID()) async throws -> [ScreenCaptureTarget] {

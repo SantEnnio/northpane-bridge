@@ -1,3 +1,4 @@
+import Synchronization
 #if canImport(CryptoKit)
 import CryptoKit
 #else
@@ -542,6 +543,21 @@ private final class TestCertificateDelegate: NSObject, URLSessionDelegate, @unch
     let pastedBack = try await client.readWorkspaceFile(path: staged.path, paneID: "pane-1", workspaceID: "workspace-1")
     #expect(pastedBack.data == pastedPNG && pastedBack.mediaType == "image/png")
     await #expect(throws: Problem.self) { try await client.stagePastedFile(Data("plain text".utf8), paneID: "pane-1", workspaceID: "workspace-1") }
+    // Schema revision 19: any file sent by name, read from disk in chunks (600 KiB is three),
+    // lands under that name and reads back the same.
+    let sentSource = FileManager.default.temporaryDirectory.appending(path: "sent-\(UUID().uuidString).csv")
+    let sentBytes = Data((0..<(600 * 1_024)).map { UInt8($0 % 251) })
+    try sentBytes.write(to: sentSource)
+    defer { try? FileManager.default.removeItem(at: sentSource) }
+    let progressSeen = Mutex<[Int]>([])
+    let sent = try await client.sendFile(at: sentSource, name: "report.csv", paneID: "pane-1", workspaceID: "workspace-1") { done, _ in
+        progressSeen.withLock { $0.append(done) }
+    }
+    #expect(sent.path.hasSuffix("/report.csv") && sent.byteCount == sentBytes.count)
+    let expectedProgress: [Int] = [262_144, 524_288, 614_400]
+    let seenProgress = progressSeen.withLock { $0 }
+    #expect(seenProgress == expectedProgress)
+    #expect(try Data(contentsOf: URL(fileURLWithPath: sent.path)) == sentBytes)
     await client.close()
 
     let returningClient = NorthpaneBridgeClient(transport: try UnixSocketBridgeTransport(path: socket.path), deviceID: signer.deviceID)

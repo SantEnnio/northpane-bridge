@@ -1117,6 +1117,8 @@ private actor BridgeHostContext {
     /// Uploads of pasted files in flight, one per idempotency key, and where the finished ones land.
     private var pastedUploads = PastedFileAssembly()
     private let pastedFiles = PastedFileStaging()
+    /// Files sent by name (revision 19), streamed to disk as they arrive.
+    private var sentUploads = SentFileUploads()
     /// The agent CLIs found on this Host, each read through the session its installation holds.
     private let agentUsage: AgentUsageMonitor
     private var runtime: HerdrRuntime?
@@ -1625,6 +1627,17 @@ private actor BridgeHostContext {
             // workspace — so the path typed into the pane is one the agent reads and the app can
             // read back. The type comes from the bytes, whatever the Client claimed.
             do {
+                // Revision 19: a file sent by name, whatever its bytes. `length` 0 cancels it.
+                if !command.path.isEmpty {
+                    guard command.length > 0 else {
+                        sentUploads.cancel(uploadID: command.idempotencyKey)
+                        return .init(commandID: command.commandID, isFinal: true)
+                    }
+                    guard let staged = try sentUploads.append(uploadID: command.idempotencyKey, name: command.path, offset: command.offset, totalBytes: command.length, chunk: command.body) else {
+                        return .init(commandID: command.commandID, totalBytes: command.offset + command.body.count)
+                    }
+                    return .init(commandID: command.commandID, relativePath: staged.path, mediaType: staged.mediaType, totalBytes: staged.byteCount, isFinal: true)
+                }
                 guard let whole = try pastedUploads.append(uploadID: command.idempotencyKey, offset: command.offset, totalBytes: command.length, chunk: command.body) else {
                     return .init(commandID: command.commandID, totalBytes: command.offset + command.body.count)
                 }
@@ -1635,6 +1648,8 @@ private actor BridgeHostContext {
                 case .unsupportedType: "pasted_file_unsupported_type"
                 case .tooLarge: "pasted_file_too_large"
                 case .invalidChunk: "pasted_file_invalid_chunk"
+                case .invalidName: "pasted_file_invalid_name"
+                case .writeFailed: "pasted_file_write_failed"
                 }
                 throw resourceProblem(code)
             }
