@@ -168,7 +168,9 @@ public enum CodexRateLimits {
     }
 
     private static func percent(_ value: Any?) -> Int? {
-        guard let number = value as? NSNumber, !(value is Bool) else { return nil }
+        // JSON's true and false arrive as numbers too, and on macOS a 0 or a 1 also answers
+        // `is Bool`: asked that way, an untouched window vanished. The stored type decides.
+        guard let number = value as? NSNumber, String(cString: number.objCType) != "c" else { return nil }
         return min(100, max(0, Int(number.doubleValue.rounded())))
     }
     private static func instant(_ value: Any?) -> Date? {

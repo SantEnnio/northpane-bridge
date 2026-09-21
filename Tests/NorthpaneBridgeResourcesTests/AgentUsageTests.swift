@@ -91,6 +91,15 @@ private let codexAnswer = """
     #expect(throws: AgentUsageFailure.unreadable) { try CodexRateLimits.meters(in: ["unexpected": true]) }
 }
 
+/// On macOS a JSON 0 answers `is Bool`, so a week nothing was spent on in yet must still be read,
+/// and a true where a percentage belongs must not.
+@Test func anUntouchedWeekBesideTheCreditsIsStillAMeter() throws {
+    let answer = #"{"rateLimits":{"limitId":"codex"},"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":0,"windowDurationMins":10080,"resetsAt":1790593798},"secondary":{"usedPercent":true},"individualLimit":{"limit":"1000","used":"699.7","remainingPercent":30,"resetsAt":1790812800}}}}"#
+    let meters = try CodexRateLimits.meters(in: JSONSerialization.jsonObject(with: Data(answer.utf8)))
+    #expect(meters.map(\.kind) == [.longWindow, .credits])
+    #expect(meters.map(\.usedPercent) == [0, 70])
+}
+
 @Test func theCodexSessionSaysWhyThereIsNothingToRead() {
     #expect(CodexRateLimits.sessionFailure(in: ["account": NSNull()]) == .signedOut)
     #expect(CodexRateLimits.sessionFailure(in: ["account": ["type": "apiKey"]]) == .noPlan)
