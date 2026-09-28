@@ -105,8 +105,14 @@ struct NorthpaneBridge {
                 FileHandle.standardError.write(Data(startupFailure(error).utf8))
                 Foundation.exit(1)
             }
+        case ["watch"]:
+            do { try await watch(sessionName: nil) }
+            catch {
+                FileHandle.standardError.write(Data("northpane-bridge: watcher unavailable\n".utf8))
+                Foundation.exit(1)
+            }
         default:
-            print("Usage: northpane-bridge [--version | self-check --json | serve --stdio | serve --local-stdio | serve --socket PATH | serve --private ADDRESS PORT --certificate CERT.pem --key KEY.pem]")
+            print("Usage: northpane-bridge [--version | self-check --json | watch | serve --stdio | serve --local-stdio | serve --socket PATH | serve --private ADDRESS PORT --certificate CERT.pem --key KEY.pem]")
         }
     }
 
@@ -138,6 +144,64 @@ struct NorthpaneBridge {
 
     private static func serveStandardIO() async throws {
         try await serve(ByteStreamBridgeTransport(kind: .ssh, input: .standardInput, output: .standardOutput, closeHandles: false), context: BridgeHostContext())
+    }
+
+    /// Independent of every Client's SSH lifecycle. A user-scoped service manager can supervise
+    /// this command; it does not attach to a PTY or accept mutations from the network.
+    private static func watch(sessionName: String?) async throws {
+        #if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
+        let root = ProcessInfo.processInfo.environment["NORTHPANE_STATE_DIRECTORY"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".northpane", directoryHint: .isDirectory)
+        let services = root.appending(path: "services", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: services, withIntermediateDirectories: true)
+        let lockFile = services.appending(path: "notification-watcher.lock")
+        let descriptor = open(lockFile.path, O_CREAT | O_RDWR, 0o600)
+        guard descriptor >= 0 else { throw NotificationError.routeUnavailable }
+        defer { _ = flock(descriptor, LOCK_UN); _ = close(descriptor) }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { throw NotificationError.routeUnavailable }
+        let context = try await BridgeHostContext()
+        while !Task.isCancelled {
+            let (events, continuation) = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
+            let subscription = HerdrEventSubscription(sessionName: sessionName)
+            let agentSubscriptions = AgentStatusSubscriptions()
+            var poller: Task<Void, Never>?
+            do {
+                try await subscription.start(onEvent: { continuation.yield(true) }, onClose: { _ in continuation.yield(false); continuation.finish() })
+                let first = try await context.currentSnapshot(sessionName: sessionName)
+                var tracker = AttentionTransitionTracker()
+                _ = tracker.observe(first.panes)
+                var pending: [String: WirePane] = [:]
+                await agentSubscriptions.update(paneIDs: first.panes.map(\.id).sorted(), sessionName: sessionName,
+                    onEvent: { continuation.yield(true) })
+                poller = Task {
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(30))
+                        if !Task.isCancelled { continuation.yield(true) }
+                    }
+                }
+                for await alive in events {
+                    guard alive, !Task.isCancelled else { break }
+                    try? await Task.sleep(for: .milliseconds(350))
+                    do {
+                        let snapshot = try await context.currentSnapshot(sessionName: sessionName)
+                        for pane in tracker.observe(snapshot.panes) { pending[pane.id] = pane }
+                        let blocked = Set(snapshot.panes.filter { $0.agentStatus == "blocked" }.map(\.id))
+                        pending = pending.filter { blocked.contains($0.key) }
+                        await context.publishAttention(Array(pending.values), in: snapshot)
+                        await agentSubscriptions.update(paneIDs: snapshot.panes.map(\.id).sorted(), sessionName: sessionName,
+                            onEvent: { continuation.yield(true) })
+                    } catch { break }
+                }
+            } catch { /* Herdr may be stopped: retry from a full snapshot. */ }
+            poller?.cancel()
+            subscription.stop()
+            await agentSubscriptions.stop()
+            continuation.finish()
+            try? await Task.sleep(for: .seconds(5))
+        }
+        #else
+        throw NotificationError.routeUnavailable
+        #endif
     }
 
     /// What this Bridge binary is, as opposed to what release it belongs to: the SHA-256 of the
@@ -955,7 +1019,6 @@ private actor BridgeConnectionObservation {
             pendingEvent = false
             do {
                 let replacement = try await context.currentSnapshot(sessionName: sessionName)
-                await context.publishNewAttention(previous: snapshot, replacement: replacement)
                 snapshot = replacement
                 let shapeChanged = !(lastPushed?.hasSameShape(as: replacement) ?? false)
                 let elapsed = Date().timeIntervalSince(lastPushedAt)
@@ -1377,6 +1440,7 @@ private actor BridgeHostContext {
             let route = NotificationRoute(id: id, deviceID: deviceID, encryptionPublicKey: command.encryptionPublicKey,
                 publisherCapability: command.publisherCapability, gatewayURL: gatewayURL, expiresAt: expiresAt)
             try await notificationRoutes.put(route)
+            try NotificationWatcherInstallation.install(stateDirectory: stateDirectory)
         case .list:
             break
         case .revoke:
@@ -1384,9 +1448,13 @@ private actor BridgeHostContext {
             let route = try await notificationRoutes.route(id: id)
             guard route.deviceID == deviceID else { throw Problem.unauthorized }
             try await notificationRoutes.revoke(id)
+            try NotificationWatcherInstallation.uninstallIfUnused(stateDirectory: stateDirectory,
+                routesRemain: !(await notificationRoutes.active()).isEmpty)
         case .deleteAll:
             try await notificationRoutes.removeAll(deviceID: deviceID)
             try await notificationDeliveries.removeAll(deviceID: deviceID)
+            try NotificationWatcherInstallation.uninstallIfUnused(stateDirectory: stateDirectory,
+                routesRemain: !(await notificationRoutes.active()).isEmpty)
         }
         let routes = await notificationRoutes.active(deviceID: deviceID).map {
             NotificationRouteDescriptor(routeID: $0.id, clientDeviceID: $0.deviceID, gatewayURL: $0.gatewayURL,
@@ -1395,10 +1463,10 @@ private actor BridgeHostContext {
         return NotificationRouteResult(commandID: command.commandID, routes: routes)
     }
 
-    func publishNewAttention(previous: WireRuntimeSnapshot?, replacement: WireRuntimeSnapshot) async {
-        let previousBlocked = Set(previous?.panes.filter { $0.agentStatus == "blocked" }.map { "\($0.id):\($0.revision)" } ?? [])
-        let additions = replacement.panes.filter { $0.agentStatus == "blocked" && !previousBlocked.contains("\($0.id):\($0.revision)") }
+    func publishAttention(_ additions: [WirePane], in replacement: WireRuntimeSnapshot) async {
         guard !additions.isEmpty else { return }
+        do { try await notificationRoutes.reload() }
+        catch { return }
         let routes = await notificationRoutes.active()
         let workspaces = Dictionary(uniqueKeysWithValues: replacement.workspaces.map { ($0.id, $0.label) })
         for pane in additions {
@@ -1408,13 +1476,15 @@ private actor BridgeHostContext {
                 workspaceLabel: workspaces[pane.workspaceID] ?? pane.workspaceID)
             for route in routes {
                 do {
-                    guard try await notificationDeliveries.claim(routeID: route.id, metadata: metadata, deviceID: route.deviceID) else { continue }
+                    guard !(await notificationDeliveries.contains(routeID: route.id, metadata: metadata, deviceID: route.deviceID)) else { continue }
                     if let encrypted = try await notificationPublisher.publish(metadata, route: route) {
                         try await notificationGateway.publish(encrypted, using: route)
-                        try await notificationRoutes.markUsed(route.id)
+                        try await notificationDeliveries.record(routeID: route.id, metadata: metadata, deviceID: route.deviceID)
                     }
                 } catch {
-                    // Notification delivery is deliberately best effort and never changes the authoritative runtime path.
+                    await notificationPublisher.forget(metadata, route: route)
+                    // Publication never changes Herdr's authoritative runtime path. The watcher
+                    // revalidates the still-blocked Pane on its next pass before another attempt.
                 }
             }
         }

@@ -113,6 +113,19 @@ public actor NotificationRouteRegistry {
         routes.values.filter { $0.revokedAt == nil && $0.expiresAt >= now && $0.lastUsedAt.addingTimeInterval(90 * 24 * 60 * 60) >= now }
     }
 
+    /// The standalone watcher is a separate process from the short-lived SSH Bridge sessions
+    /// that register routes. Read their atomically replaced file before attempting delivery.
+    public func reload() throws {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { routes = [:]; return }
+        let stored = try Data(contentsOf: fileURL)
+        let clear = if let encryptionKey {
+            try AES.GCM.open(try AES.GCM.SealedBox(combined: stored), using: encryptionKey)
+        } else { stored }
+        let document = try JSONDecoder().decode(Document.self, from: clear)
+        guard document.schemaVersion == 1 else { throw NotificationError.corruptStore }
+        routes = Dictionary(uniqueKeysWithValues: document.routes.map { ($0.id, $0) })
+    }
+
     public func active(deviceID: ClientDeviceID, now: Date = Date()) -> [NotificationRoute] {
         active(now: now).filter { $0.deviceID == deviceID }
     }
@@ -164,6 +177,12 @@ public actor NotificationPublisher {
     private var sent: Set<String> = []
     private var recentByHost: [String: [Date]] = [:]
     public init() {}
+
+    /// An explicit gateway failure does not count as a delivered alert. The delivery ledger,
+    /// not this transient process-local guard, remains authoritative after a restart.
+    public func forget(_ metadata: AttentionNotificationMetadata, route: NotificationRoute) {
+        sent.remove("\(route.id.uuidString):\(metadata.attentionID):\(metadata.revision):\(route.deviceID.rawValue.uuidString)")
+    }
 
     public func publish(_ metadata: AttentionNotificationMetadata, route: NotificationRoute, now: Date = Date()) throws -> EncryptedNotification? {
         guard route.encryptionPublicKey.count == 32 else { throw NotificationError.invalidKey }

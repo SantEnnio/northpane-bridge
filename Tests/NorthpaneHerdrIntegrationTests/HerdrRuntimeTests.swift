@@ -194,6 +194,20 @@ private struct FixtureExecutableChecker: AgentExecutableChecking {
     #expect(throws: AgentExecutableResolutionError.unavailable(.claude)) { try resolver.resolve(.claude) }
 }
 
+#if os(Windows)
+@Test func agentResolverUsesWindowsPathEntriesAndExecutableExtension() {
+    for key in ["PATH", "Path"] {
+        let resolver = AgentExecutableResolver(checker: FixtureExecutableChecker(working: []),
+            environment: [key: "C:\\Tools\\one;D:\\Agents\\two"], homeDirectory: "C:\\Users\\test")
+        let paths = resolver.candidatePaths(for: .codex)
+        #expect(paths.count == 2)
+        #expect(paths.allSatisfy { $0.lowercased().hasSuffix("codex.exe") })
+        #expect(paths[0].contains("Tools"))
+        #expect(paths[1].contains("Agents"))
+    }
+}
+#endif
+
 @Test func executableRuntimeRejectsMismatchedWorkspaceCreationIdentities() async throws {
     let response = Data(#"{"id":"cli:workspace:create","result":{"root_pane":{"pane_id":"wB:p1","workspace_id":"other"},"type":"workspace_created","workspace":{"workspace_id":"wB"}}}"#.utf8)
     let runtime = HerdrRuntime(runner: FixtureRunner([response]), incarnationID: "incarnation")

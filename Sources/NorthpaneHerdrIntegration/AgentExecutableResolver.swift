@@ -110,9 +110,21 @@ public struct AgentExecutableResolver: Sendable {
             overrideKey = "NORTHPANE_OPENCODE_EXECUTABLE"
             preferred = ["\(homeDirectory)/.local/bin/opencode"]
         }
-        let fromPath = (environment["PATH"] ?? "")
-            .split(separator: ":", omittingEmptySubsequences: true)
-            .map { URL(fileURLWithPath: String($0)).appending(path: command).path }
+        #if os(Windows)
+        // Windows PATH entries use semicolons; the executable named by a directory entry
+        // needs its extension. Unix and app-bundled locations cannot exist on this Host.
+        let separator: Character = ";"
+        let executableName = command + ".exe"
+        let pathVariable = environment["PATH"] ?? environment["Path"] ?? ""
+        preferred = []
+        #else
+        let separator: Character = ":"
+        let executableName = command
+        let pathVariable = environment["PATH"] ?? ""
+        #endif
+        let fromPath = pathVariable
+            .split(separator: separator, omittingEmptySubsequences: true)
+            .map { URL(fileURLWithPath: String($0)).appending(path: executableName).path }
         let ordered = [environment[overrideKey]].compactMap { $0 } + preferred + fromPath
         var seen = Set<String>()
         return ordered.filter { !$0.isEmpty && seen.insert($0).inserted }

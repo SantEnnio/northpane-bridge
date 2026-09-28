@@ -720,7 +720,8 @@ public actor NorthpaneBridgeClient {
     }
 
     private func envelope(_ payload: EnvelopePayload, channelID: ChannelID? = nil) -> Envelope {
-        Envelope(connectionID: connectionID, channelID: channelID ?? controlChannelID, payload: payload)
+        Envelope(schemaRevision: accepted?.schemaRevision ?? BridgeProtocol.schemaRevision,
+            connectionID: connectionID, channelID: channelID ?? controlChannelID, payload: payload)
     }
 }
 

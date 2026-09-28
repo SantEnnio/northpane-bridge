@@ -12,6 +12,8 @@ import Testing
     let publication = try #require(try await publisher.publish(metadata, route: route))
     #expect(!String(decoding: publication.ciphertext, as: UTF8.self).contains("opaque"))
     #expect(try await publisher.publish(metadata, route: route) == nil)
+    await publisher.forget(metadata, route: route)
+    #expect(try await publisher.publish(metadata, route: route) != nil)
     #expect(try NotificationPublisher.decrypt(publication, secret: material.secret) == metadata)
     #expect(!AnnounceNotificationsPolicy.permitsActions)
 }
@@ -27,6 +29,23 @@ import Testing
     let reloaded = try NotificationRouteRegistry(fileURL: file)
     try await reloaded.revoke(material.route.id)
     await #expect(throws: NotificationError.routeUnavailable) { try await reloaded.route(id: material.route.id) }
+}
+
+@Test func standaloneWatcherSeesRoutesRegisteredAndRevokedByAnotherBridgeProcess() async throws {
+    let base = FileManager.default.temporaryDirectory.appending(path: "northpane-watcher-routes-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: base) }
+    let file = base.appending(path: "routes.bin")
+    let key = Data(repeating: 7, count: 32)
+    let watcher = try NotificationRouteRegistry(fileURL: file, encryptionKey: key)
+    let client = try NotificationRouteRegistry(fileURL: file, encryptionKey: key)
+    let material = try NotificationRouteMaterial.generate(deviceID: ClientDeviceID(), gatewayURL: URL(string: "https://notifications.northpane.example/")!)
+    try await client.put(material.route)
+    #expect(await watcher.active().isEmpty)
+    try await watcher.reload()
+    #expect(await watcher.active().map(\.id) == [material.route.id])
+    try await client.revoke(material.route.id)
+    try await watcher.reload()
+    #expect(await watcher.active().isEmpty)
 }
 
 @Test func notificationRouteDeletionIsScopedToOneDevice() async throws {
