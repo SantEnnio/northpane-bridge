@@ -110,14 +110,15 @@ private func statement(
     let url = directory.appending(path: "paired-devices.json")
     let held = try HostPairingFile.lock(at: url)
     let acquired = Mutex(false)
-    let waiter = Task.detached {
-        let lock = try HostPairingFile.lock(at: url)
+    // The waiter blocks a thread of its own: a blocked cooperative thread can stall a small pool.
+    Thread.detachNewThread {
+        guard let lock = try? HostPairingFile.lock(at: url) else { return }
         acquired.withLock { $0 = true }
         lock.unlock()
     }
     try await Task.sleep(for: .milliseconds(300))
     #expect(!acquired.withLock { $0 })
     held.unlock()
-    try await waiter.value
+    for _ in 0..<250 where !acquired.withLock({ $0 }) { try await Task.sleep(for: .milliseconds(20)) }
     #expect(acquired.withLock { $0 })
 }

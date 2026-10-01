@@ -49,6 +49,11 @@ public final class ByteStreamBridgeTransport: BridgeTransport, @unchecked Sendab
     private let stateLock = NSLock()
     private let readLock = NSLock()
     private let writeLock = NSLock()
+    /// Where the blocking reads wait: a thread of Dispatch's own, never one of the cooperative
+    /// pool. An idle connection waits on a read for as long as it is idle, and a few of them used
+    /// to hold every thread a small pool has, stalling the very tasks that would write to them
+    /// (a Linux runner with a handful of cores hung in the tests that open several at once).
+    private let readQueue = DispatchQueue(label: "northpane.bridge-transport.read")
     private var isClosed = false
 
     public init(kind: TransportKind, input: FileHandle, output: FileHandle, closeHandles: Bool = true,
@@ -69,7 +74,9 @@ public final class ByteStreamBridgeTransport: BridgeTransport, @unchecked Sendab
     }
 
     public func receive() async throws -> Envelope {
-        try await Task.detached { [self] in try blockingReceive() }.value
+        try await withCheckedThrowingContinuation { continuation in
+            readQueue.async { [self] in continuation.resume(with: Result { try blockingReceive() }) }
+        }
     }
 
     public func close() async {
