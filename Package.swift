@@ -34,9 +34,11 @@ let package = Package(
         .target(name: "NorthpaneConnection", dependencies: [
             "NorthpaneProtocol", "NorthpaneProjection", "NorthpaneSecurity",
             .product(name: "Crypto", package: "swift-crypto"),
-            .product(name: "NIOCore", package: "swift-nio", condition: .when(platforms: [.iOS])),
-            .product(name: "NIOPosix", package: "swift-nio", condition: .when(platforms: [.iOS])),
-            .product(name: "NIOSSH", package: "swift-nio-ssh", condition: .when(platforms: [.iOS])),
+            // The native SSH client on iOS; on the Mac the relay that carries a device's own SSH
+            // session to a Host (and the same client, for the relay's tests).
+            .product(name: "NIOCore", package: "swift-nio", condition: .when(platforms: [.iOS, .macOS])),
+            .product(name: "NIOPosix", package: "swift-nio", condition: .when(platforms: [.iOS, .macOS])),
+            .product(name: "NIOSSH", package: "swift-nio-ssh", condition: .when(platforms: [.iOS, .macOS])),
         ]),
         .target(name: "NorthpaneDiagnostics", dependencies: ["NorthpaneProtocol", .product(name: "Crypto", package: "swift-crypto")]),
         .executableTarget(name: "NorthpaneBridge", dependencies: [
@@ -57,6 +59,11 @@ let package = Package(
         .testTarget(name: "NorthpaneSecurityTests", dependencies: ["NorthpaneSecurity"]),
         .testTarget(name: "NorthpaneBridgeResourcesTests", dependencies: ["NorthpaneBridgeResources"]),
         .testTarget(name: "NorthpaneDiagnosticsTests", dependencies: ["NorthpaneDiagnostics"]),
-        .testTarget(name: "NorthpaneConnectionTests", dependencies: ["NorthpaneConnection", "NorthpaneSecurity", .product(name: "Crypto", package: "swift-crypto")]),
+        .testTarget(name: "NorthpaneConnectionTests", dependencies: [
+            "NorthpaneConnection", "NorthpaneSecurity", .product(name: "Crypto", package: "swift-crypto"),
+            .product(name: "NIOCore", package: "swift-nio", condition: .when(platforms: [.macOS])),
+            .product(name: "NIOPosix", package: "swift-nio", condition: .when(platforms: [.macOS])),
+            .product(name: "NIOSSH", package: "swift-nio-ssh", condition: .when(platforms: [.macOS])),
+        ]),
     ]
 )

@@ -82,6 +82,10 @@ What it runs, and nothing else:
 - The libraries both sides share: the wire protocol (`Protocol/bridge-v1.proto`, with every
   published revision frozen in `Protocol/compatibility`), the Herdr integration, the
   projection of Herdr's state, and the connection and security layers.
+- The relay a Mac of the Operator's can run for their other devices (`SSHRelayServer`): an SSH
+  server that takes enrolled device keys only and opens `direct-tcpip` channels only to the
+  Hosts the Operator enabled. A device runs its own SSH session with the Host inside that
+  channel, so the relay never sees what the session carries.
 
 ## Build and test
 
