@@ -1564,7 +1564,7 @@ private actor BridgeHostContext {
     /// Changes the pairings holding the lock every Bridge process on this Host takes: the change is
     /// made to what the file says now, not to what this process read earlier, and written before
     /// anyone else may change it.
-    func changePairings<T>(_ change: () async throws -> T) async throws -> T {
+    func changePairings<T: Sendable>(_ change: @Sendable () async throws -> T) async throws -> T {
         let lock = try HostPairingFile.lock(at: pairingFile)
         defer { lock.unlock() }
         let hostID = authority.identity.hostID
