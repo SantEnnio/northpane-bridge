@@ -37,6 +37,8 @@ private final class TestDirectory: SSHRelayDirectory, @unchecked Sendable {
     }
 
     func permits(host: String, port: Int) -> Bool { permitted.contains("\(host):\(port)") }
+
+    func hostsDocument() -> Data { Data(#"["the hosts the app describes"]"#.utf8) }
 }
 
 /// The Host's side of a session: the Bridge, run for the `exec` the device asks for.
@@ -245,6 +247,41 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
     _ = try await client.handshake(signer: signer)
     await relay.disconnect(device: fixture.deviceKey)
     await #expect(throws: (any Error).self) { _ = try await client.pair(using: signer) }
+}
+
+@Test func enrollingWithTheTokenReadsTheHostsTheRelayReaches() async throws {
+    let fixture = try await RelayFixture()
+    let directory = TestDirectory(token: "from-the-qr-code", permitted: [("127.0.0.1", fixture.hostPort)])
+    let (relay, port) = try await fixture.relay(directory)
+    defer { Task { await relay.stop(); await fixture.tearDown() } }
+    let route = SSHRelayRoute(host: "127.0.0.1", port: port, hostKeyFingerprint: relay.hostKeyFingerprint, enrollmentToken: "from-the-qr-code")
+
+    #expect(try await SSHRelayEnrollment.hosts(route, credential: fixture.credential) == directory.hostsDocument())
+    #expect(directory.isEnrolled(fixture.deviceKey))
+    // Enrolled: the key alone reads them again, and the spent token enrolls no other key.
+    let again = SSHRelayRoute(host: "127.0.0.1", port: port, hostKeyFingerprint: relay.hostKeyFingerprint)
+    #expect(try await SSHRelayEnrollment.hosts(again, credential: fixture.credential) == directory.hostsDocument())
+    await expectRelayError(.deviceNotEnrolled) { _ = try await SSHRelayEnrollment.hosts(route, credential: try NativeSSHCredential()) }
+    do {
+        _ = try await SSHRelayEnrollment.hosts(SSHRelayRoute(host: "127.0.0.1", port: port, hostKeyFingerprint: "SHA256:another"), credential: fixture.credential)
+        Issue.record("Enrolled with a relay showing another key")
+    } catch SystemTransportError.hostKeyMismatch {
+    } catch {
+        Issue.record("Expected a host key mismatch, got \(error)")
+    }
+}
+
+/// A session on the relay reads its Hosts and does nothing else: no command of the device's
+/// choosing runs on the Mac.
+@Test func theRelayRunsNoCommandButItsOwnList() async throws {
+    let fixture = try await RelayFixture()
+    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], permitted: [("127.0.0.1", fixture.hostPort)]))
+    defer { Task { await relay.stop(); await fixture.tearDown() } }
+    // The relay as if it were a Host: a session asking it for a command gets nothing back.
+    let deployment = try NativeSFTPBridgeDeployment(host: "127.0.0.1", port: port, username: SSHRelayRoute.username,
+                                                    credential: fixture.credential, expectedHostKeyFingerprint: relay.hostKeyFingerprint)
+    let result = try? await deployment.runInstallerShellScript("echo hello", arguments: [])
+    #expect(result?.output.contains("hello") != true)
 }
 
 @Test func theRelayListensOnlyWhereThePublicCannotReach() {

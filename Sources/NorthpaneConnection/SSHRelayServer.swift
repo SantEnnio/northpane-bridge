@@ -14,6 +14,9 @@ public protocol SSHRelayDirectory: Sendable {
     func enroll(_ publicKey: String, token: String) -> Bool
     /// Whether the relay may connect to this Host's SSH port.
     func permits(host: String, port: Int) -> Bool
+    /// What an enrolled device is told about the Hosts it can reach through the relay, in whatever
+    /// form the app reads: the relay passes it on unread.
+    func hostsDocument() -> Data
 }
 
 /// The SSH server inside the Mac app that carries an enrolled device's own SSH session to a Host
@@ -107,9 +110,13 @@ public final class SSHRelayServer: @unchecked Sendable {
     }
 
     /// A channel the device opened: a `direct-tcpip` one to a Host the Operator enabled is joined
-    /// to a new connection to that Host; anything else is refused.
+    /// to a new connection to that Host; a session may ask for the list of those Hosts and for
+    /// nothing else; anything else is refused.
     private static func forward(_ child: Channel, type: SSHChannelType, authentication: RelayServerAuthentication,
                                 directory: any SSHRelayDirectory) -> EventLoopFuture<Void> {
+        if type == .session, authentication.authenticatedKey != nil {
+            return child.pipeline.addHandler(RelayHostsSession(directory: directory))
+        }
         guard case let .directTCPIP(request) = type, authentication.authenticatedKey != nil,
               directory.permits(host: request.targetHost, port: request.targetPort) else {
             return child.eventLoop.makeFailedFuture(SSHRelayError.targetRefused)
@@ -127,6 +134,36 @@ public final class SSHRelayServer: @unchecked Sendable {
                 .map { _ in () }
         }
     }
+}
+
+/// The one thing a session on the relay may do: read the Hosts it reaches, with the command
+/// `SSHRelayRoute.hostsCommand`. A shell, any other command or a subsystem closes the session.
+final class RelayHostsSession: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+    typealias OutboundOut = SSHChannelData
+    private let directory: any SSHRelayDirectory
+
+    init(directory: any SSHRelayDirectory) { self.directory = directory }
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        switch event {
+        case let exec as SSHChannelRequestEvent.ExecRequest where exec.command == SSHRelayRoute.hostsCommand:
+            var buffer = context.channel.allocator.buffer(capacity: 0)
+            buffer.writeBytes(directory.hostsDocument())
+            let channel = context.channel
+            context.writeAndFlush(wrapOutboundOut(.init(type: .channel, data: .byteBuffer(buffer)))).whenComplete { _ in
+                channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: 0)).whenComplete { _ in
+                    channel.close(promise: nil)
+                }
+            }
+        case is SSHChannelRequestEvent.ExecRequest, is SSHChannelRequestEvent.ShellRequest, is SSHChannelRequestEvent.SubsystemRequest:
+            context.close(promise: nil)
+        default:
+            context.fireUserInboundEventTriggered(event)
+        }
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {}
 }
 
 /// Who may log in: a device whose key the relay knows, or one that brings the enrollment token as

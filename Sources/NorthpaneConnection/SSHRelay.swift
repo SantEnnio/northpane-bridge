@@ -4,6 +4,7 @@ import Foundation
 import NIOCore
 import NIOPosix
 import NIOSSH
+import NorthpaneProtocol
 
 /// How a device reaches a Host through a Mac of the Operator's that relays it: the relay's address,
 /// the fingerprint of its SSH host key, and the enrollment token the device presents once, the first
@@ -11,6 +12,8 @@ import NIOSSH
 public struct SSHRelayRoute: Equatable, Sendable {
     /// The name every device logs in to the relay with; who it is, is its key.
     public static let username = "northpane-relay"
+    /// The one command a relay runs: it answers with the Hosts the device can reach through it.
+    public static let hostsCommand = "northpane-relay-hosts"
     public let host: String
     public let port: Int
     public let hostKeyFingerprint: String
@@ -18,6 +21,11 @@ public struct SSHRelayRoute: Equatable, Sendable {
 
     public init(host: String, port: Int, hostKeyFingerprint: String, enrollmentToken: String? = nil) {
         self.host = host; self.port = port; self.hostKeyFingerprint = hostKeyFingerprint; self.enrollmentToken = enrollmentToken
+    }
+
+    /// The relay of a saved route, at one of its addresses.
+    public init(_ profile: RelayProfile, address: String, enrollmentToken: String? = nil) {
+        self.init(host: address, port: profile.port, hostKeyFingerprint: profile.hostKeyFingerprint, enrollmentToken: enrollmentToken)
     }
 }
 
@@ -92,6 +100,108 @@ final class RelayClientAuthentication: NIOSSHClientUserAuthenticationDelegate, @
                                                offer: .password(.init(password: token))))
         case nil:
             nextChallengePromise.fail(SSHRelayError.deviceNotEnrolled)
+        }
+    }
+}
+
+/// The connection that carries the Host's SSH: a TCP connection of its own or, through a relay, a
+/// channel of the relay's with the device's own SSH session inside it. Every SSH operation a device
+/// makes on a Host opens it here, so that none of them tries a road the device may not have.
+struct HostSSHConnection: Sendable {
+    /// The channel the Host's `NIOSSHHandler` sits on.
+    let parent: Channel
+    /// The SSH connection to the relay, when there is one.
+    let relay: Channel?
+
+    func close() async {
+        try? await parent.close().get()
+        try? await relay?.close().get()
+    }
+
+    static func open(
+        host: String, port: Int, relay: SSHRelayRoute?, relayKey: P256.Signing.PrivateKey?,
+        userAuthentication: any NIOSSHClientUserAuthenticationDelegate & Sendable, hostKeys: PinnedHostKeyDelegate
+    ) async throws -> HostSSHConnection {
+        if let relay {
+            guard let relayKey else { throw SSHRelayError.deviceNotEnrolled }
+            let opened = try await SSHRelayClient.open(relay, deviceKey: relayKey, targetHost: host, targetPort: port) { channel in
+                try channel.pipeline.syncOperations.addHandlers(
+                    SSHChannelByteStream(),
+                    NIOSSHHandler(role: .client(.init(userAuthDelegate: userAuthentication, serverAuthDelegate: hostKeys)),
+                                  allocator: channel.allocator, inboundChildChannelInitializer: nil),
+                    SSHParentErrorHandler()
+                )
+            }
+            return HostSSHConnection(parent: opened.forward, relay: opened.relay)
+        }
+        let parent = try await NativeSSHReachability.named {
+            try await ClientBootstrap(group: SSHEventLoopGroup.shared)
+                .channelInitializer { channel in
+                    channel.eventLoop.makeCompletedFuture {
+                        try channel.pipeline.syncOperations.addHandlers(
+                            NIOSSHHandler(role: .client(.init(userAuthDelegate: userAuthentication, serverAuthDelegate: hostKeys)),
+                                          allocator: channel.allocator, inboundChildChannelInitializer: nil),
+                            SSHParentErrorHandler()
+                        )
+                    }
+                }
+                .connect(host: host, port: port)
+                .get()
+        }
+        return HostSSHConnection(parent: parent, relay: nil)
+    }
+}
+
+public enum SSHRelayEnrollment {
+    /// Logs in to the relay with the device's key — and the enrollment token, the first time, which
+    /// enrolls the device — and reads the Hosts the relay reaches for it. Nothing else is opened.
+    public static func hosts(_ route: SSHRelayRoute, credential: NativeSSHCredential) async throws -> Data {
+        let key = try P256.Signing.PrivateKey(rawRepresentation: credential.rawPrivateKey)
+        let authentication = RelayClientAuthentication(privateKey: NIOSSHPrivateKey(p256Key: key), enrollmentToken: route.enrollmentToken)
+        let relayKeys = PinnedHostKeyDelegate(expectedFingerprint: route.hostKeyFingerprint)
+        let relay: Channel
+        do {
+            relay = try await NativeSSHReachability.named {
+                try await ClientBootstrap(group: SSHEventLoopGroup.shared)
+                    .channelInitializer { channel in
+                        channel.eventLoop.makeCompletedFuture {
+                            try channel.pipeline.syncOperations.addHandlers(
+                                NIOSSHHandler(role: .client(.init(userAuthDelegate: authentication, serverAuthDelegate: relayKeys)),
+                                              allocator: channel.allocator, inboundChildChannelInitializer: nil),
+                                SSHParentErrorHandler()
+                            )
+                        }
+                    }
+                    .connect(host: route.host, port: route.port)
+                    .get()
+            }
+        } catch is SystemTransportError {
+            throw SSHRelayError.relayUnreachable
+        }
+        let inbound = SSHInboundBuffer()
+        do {
+            let child = try await relay.pipeline.handler(type: NIOSSHHandler.self).flatMap { ssh in
+                let promise = relay.eventLoop.makePromise(of: Channel.self)
+                ssh.createChannel(promise) { channel, _ in
+                    channel.pipeline.addHandler(NativeSSHRawHandler(request: .exec(SSHRelayRoute.hostsCommand), inbound: inbound))
+                }
+                return promise.futureResult
+            }.get()
+            // The relay answers and closes at once: read to the end, closing nothing first, or a
+            // half-close could land on a channel already gone.
+            var document = Data()
+            while let chunk = try await inbound.next() {
+                document.append(chunk)
+                guard document.count <= 1_048_576 else { throw SSHRelayError.relayUnreachable }
+            }
+            _ = child
+            try? await relay.close().get()
+            return document
+        } catch {
+            try? await relay.close().get()
+            if let mismatch = relayKeys.mismatch { throw mismatch }
+            if authentication.wasRejected { throw SSHRelayError.deviceNotEnrolled }
+            throw error
         }
     }
 }

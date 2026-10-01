@@ -71,40 +71,10 @@ public actor NativeSSHBridgeTransport: BridgeTransport {
         let cryptoKey = try P256.Signing.PrivateKey(rawRepresentation: credential.rawPrivateKey)
         let authentication = KeyOnlyAuthenticationDelegate(username: username, privateKey: NIOSSHPrivateKey(p256Key: cryptoKey))
         let hostKeys = PinnedHostKeyDelegate(expectedFingerprint: expectedHostKeyFingerprint)
-        let parent: Channel
-        var relayChannel: Channel?
-        if let relay {
-            // The device's own SSH session with the Host, inside a channel of the relay's: the Host
-            // checks this device's key, and the relay carries bytes it cannot read.
-            let opened = try await SSHRelayClient.open(relay, deviceKey: cryptoKey, targetHost: host, targetPort: port) { channel in
-                try channel.pipeline.syncOperations.addHandlers(
-                    SSHChannelByteStream(),
-                    NIOSSHHandler(role: .client(.init(userAuthDelegate: authentication, serverAuthDelegate: hostKeys)),
-                                  allocator: channel.allocator, inboundChildChannelInitializer: nil),
-                    SSHParentErrorHandler()
-                )
-            }
-            parent = opened.forward
-            relayChannel = opened.relay
-        } else {
-            parent = try await NativeSSHReachability.named {
-                try await ClientBootstrap(group: SSHEventLoopGroup.shared)
-                    .channelInitializer { channel in
-                        channel.eventLoop.makeCompletedFuture {
-                            try channel.pipeline.syncOperations.addHandlers(
-                                NIOSSHHandler(
-                                    role: .client(.init(userAuthDelegate: authentication, serverAuthDelegate: hostKeys)),
-                                    allocator: channel.allocator,
-                                    inboundChildChannelInitializer: nil
-                                ),
-                                SSHParentErrorHandler()
-                            )
-                        }
-                    }
-                    .connect(host: host, port: port)
-                    .get()
-            }
-        }
+        let connection = try await HostSSHConnection.open(host: host, port: port, relay: relay, relayKey: cryptoKey,
+                                                         userAuthentication: authentication, hostKeys: hostKeys)
+        let parent = connection.parent
+        let relayChannel = connection.relay
 
         let inbound = SSHInboundBuffer()
         do {
@@ -186,10 +156,14 @@ public struct NativeSFTPBridgeDeployment: RemoteBridgeDeploymentAdapter {
     private let username: String
     private let credential: NativeSSHCredential
     private let expectedFingerprint: String?
+    /// The relay every session to this Host goes through, when the Host is reached through a Mac.
+    private let relay: SSHRelayRoute?
 
-    public init(host: String, port: Int = 22, username: String, credential: NativeSSHCredential, expectedHostKeyFingerprint: String?) throws {
+    public init(host: String, port: Int = 22, username: String, credential: NativeSSHCredential, expectedHostKeyFingerprint: String?,
+                relay: SSHRelayRoute? = nil) throws {
         guard !host.isEmpty, !username.isEmpty, (1...65_535).contains(port) else { throw BridgeInstallationError.invalidManifest }
         self.host = host; self.port = port; self.username = username; self.credential = credential; expectedFingerprint = expectedHostKeyFingerprint
+        self.relay = relay
     }
 
     public func platformIdentifier() async throws -> String {
@@ -351,14 +325,9 @@ public struct NativeSFTPBridgeDeployment: RemoteBridgeDeploymentAdapter {
         let key = try P256.Signing.PrivateKey(rawRepresentation: credential.rawPrivateKey)
         let authentication = KeyOnlyAuthenticationDelegate(username: username, privateKey: NIOSSHPrivateKey(p256Key: key))
         let hostKeys = PinnedHostKeyDelegate(expectedFingerprint: expectedFingerprint)
-        let parent = try await NativeSSHReachability.named {
-            try await ClientBootstrap(group: SSHEventLoopGroup.shared)
-                .channelInitializer { channel in
-                    channel.eventLoop.makeCompletedFuture {
-                        try channel.pipeline.syncOperations.addHandlers(NIOSSHHandler(role: .client(.init(userAuthDelegate: authentication, serverAuthDelegate: hostKeys)), allocator: channel.allocator, inboundChildChannelInitializer: nil), SSHParentErrorHandler())
-                    }
-                }.connect(host: host, port: port).get()
-        }
+        let connection = try await HostSSHConnection.open(host: host, port: port, relay: relay, relayKey: key,
+                                                         userAuthentication: authentication, hostKeys: hostKeys)
+        let parent = connection.parent
         let inbound = SSHInboundBuffer()
         do {
             let child = try await parent.pipeline.handler(type: NIOSSHHandler.self).flatMap { ssh in
@@ -370,8 +339,8 @@ public struct NativeSFTPBridgeDeployment: RemoteBridgeDeploymentAdapter {
                 return promise.futureResult
             }.get()
             guard hostKeys.observedFingerprint != nil else { throw SystemTransportError.ioFailure }
-            return NativeSSHRawSession(parent: parent, child: child, inbound: inbound)
-        } catch { try? await parent.close().get(); throw error }
+            return NativeSSHRawSession(parent: parent, child: child, inbound: inbound, relay: connection.relay)
+        } catch { await connection.close(); throw error }
     }
 }
 
@@ -389,7 +358,7 @@ enum SSHEventLoopGroup {
     static let shared = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 }
 
-private final class SSHInboundBuffer: @unchecked Sendable {
+final class SSHInboundBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var queued: [Data] = []
     private var waiters: [CheckedContinuation<Data?, Error>] = []
@@ -458,19 +427,21 @@ public enum NativeSSHKeyBootstrap {
         username: String,
         password: String,
         authorizedKey: String,
-        expectedHostKeyFingerprint: String? = nil
+        expectedHostKeyFingerprint: String? = nil,
+        relay: SSHRelayRoute? = nil,
+        relayCredential: NativeSSHCredential? = nil
     ) async throws -> String {
         guard !host.isEmpty, !username.isEmpty, (1...65_535).contains(port) else { throw SystemTransportError.invalidEndpoint }
         guard !password.isEmpty else { throw SSHKeyBootstrapError.emptyPassword }
         let command = try SSHAuthorizedKeyInstall.remoteCommand(authorizedKey: authorizedKey)
         let authentication = PasswordAuthenticationDelegate(username: username, password: password)
         let hostKeys = PinnedHostKeyDelegate(expectedFingerprint: expectedHostKeyFingerprint)
-        let parent = try await ClientBootstrap(group: SSHEventLoopGroup.shared)
-            .channelInitializer { channel in
-                channel.eventLoop.makeCompletedFuture {
-                    try channel.pipeline.syncOperations.addHandlers(NIOSSHHandler(role: .client(.init(userAuthDelegate: authentication, serverAuthDelegate: hostKeys)), allocator: channel.allocator, inboundChildChannelInitializer: nil), SSHParentErrorHandler())
-                }
-            }.connect(host: host, port: port).get()
+        // Through a relay the device logs in to the relay with its own key, then to the Host with
+        // the password, inside the relay's channel.
+        let relayKey = try relayCredential.map { try P256.Signing.PrivateKey(rawRepresentation: $0.rawPrivateKey) }
+        let connection = try await HostSSHConnection.open(host: host, port: port, relay: relay, relayKey: relayKey,
+                                                         userAuthentication: authentication, hostKeys: hostKeys)
+        let parent = connection.parent
         let inbound = SSHInboundBuffer()
         do {
             let child = try await parent.pipeline.handler(type: NIOSSHHandler.self).flatMap { ssh in
@@ -482,12 +453,12 @@ public enum NativeSSHKeyBootstrap {
                 return promise.futureResult
             }.get()
             guard let fingerprint = hostKeys.observedFingerprint else { throw SystemTransportError.ioFailure }
-            let session = NativeSSHRawSession(parent: parent, child: child, inbound: inbound)
+            let session = NativeSSHRawSession(parent: parent, child: child, inbound: inbound, relay: connection.relay)
             do { _ = try await session.sendAndFinish(Data()) }
             catch SystemTransportError.launchFailed { throw SystemTransportError.processFailed(exitCode: 1) }
             return fingerprint
         } catch {
-            try? await parent.close().get()
+            await connection.close()
             if authentication.wasRejected { throw SystemTransportError.sshAuthenticationFailed }
             throw error
         }
@@ -671,9 +642,9 @@ final class SSHParentErrorHandler: ChannelInboundHandler, @unchecked Sendable {
     func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
 }
 
-private enum NativeSSHRequest: Sendable { case exec(String), subsystem(String) }
+enum NativeSSHRequest: Sendable { case exec(String), subsystem(String) }
 
-private final class NativeSSHRawHandler: ChannelDuplexHandler, @unchecked Sendable {
+final class NativeSSHRawHandler: ChannelDuplexHandler, @unchecked Sendable {
     typealias InboundIn = SSHChannelData
     typealias OutboundIn = ByteBuffer
     typealias OutboundOut = SSHChannelData
@@ -712,12 +683,15 @@ private final class NativeSSHRawHandler: ChannelDuplexHandler, @unchecked Sendab
     func errorCaught(context: ChannelHandlerContext, error: Error) { inbound.finish(error: error); context.close(promise: nil) }
 }
 
-private actor NativeSSHRawSession {
+actor NativeSSHRawSession {
     private let parent: Channel
     private let child: Channel
+    private let relay: Channel?
     private let inbound: SSHInboundBuffer
     private var pending = Data()
-    init(parent: Channel, child: Channel, inbound: SSHInboundBuffer) { self.parent = parent; self.child = child; self.inbound = inbound }
+    init(parent: Channel, child: Channel, inbound: SSHInboundBuffer, relay: Channel? = nil) {
+        self.parent = parent; self.child = child; self.inbound = inbound; self.relay = relay
+    }
 
     func sendAndFinish(_ data: Data) async throws -> Data {
         try await collect(data)
@@ -769,7 +743,11 @@ private actor NativeSSHRawSession {
         await close()
     }
 
-    func close() async { try? await child.close().get(); try? await parent.close().get() }
+    func close() async {
+        try? await child.close().get()
+        try? await parent.close().get()
+        try? await relay?.close().get()
+    }
 
     private func requireSFTPOK(requestID: UInt32) async throws {
         let packet = try await receiveSFTPPacket(); guard packet.type == 101 else { throw BridgeInstallationError.transferFailed }
