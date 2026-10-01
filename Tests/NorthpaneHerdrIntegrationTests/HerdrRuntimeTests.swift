@@ -179,6 +179,9 @@ private struct FixtureExecutableChecker: AgentExecutableChecking {
     func isWorkingExecutable(_ url: URL, timeout: TimeInterval) -> Bool { working.contains(url.path) }
 }
 
+// POSIX paths and a `:`-separated PATH: a Windows resolver splits on `;` and looks for `.exe`, as
+// `agentResolverUsesWindowsPathEntriesAndExecutableExtension` checks, so it never meets these.
+#if !os(Windows)
 @Test func agentResolverSkipsBrokenCandidatesAndReturnsTheVerifiedExecutable() throws {
     let resolver = AgentExecutableResolver(
         checker: FixtureExecutableChecker(working: ["/tools/good/codex"]),
@@ -188,6 +191,7 @@ private struct FixtureExecutableChecker: AgentExecutableChecking {
     let detected = try resolver.resolve(.codex)
     #expect(detected.url.path == "/tools/good/codex")
 }
+#endif
 
 @Test func agentResolverReportsUnavailableWithoutFallingBackToAnUncheckedCommand() {
     let resolver = AgentExecutableResolver(checker: FixtureExecutableChecker(working: []), environment: ["PATH": "/empty"], homeDirectory: "/Users/test")
