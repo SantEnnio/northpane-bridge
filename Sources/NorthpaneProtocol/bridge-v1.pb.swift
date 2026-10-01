@@ -1364,6 +1364,22 @@ nonisolated struct Northpane_Bridge_V1_Envelope: @unchecked Sendable {
     set {_uniqueStorage()._payload = .terminalScroll(newValue)}
   }
 
+  var deviceSessionProof: Northpane_Bridge_V1_DeviceSessionProof {
+    get {
+      if case .deviceSessionProof(let v)? = _storage._payload {return v}
+      return Northpane_Bridge_V1_DeviceSessionProof()
+    }
+    set {_uniqueStorage()._payload = .deviceSessionProof(newValue)}
+  }
+
+  var deviceSessionAccepted: Northpane_Bridge_V1_DeviceSessionAccepted {
+    get {
+      if case .deviceSessionAccepted(let v)? = _storage._payload {return v}
+      return Northpane_Bridge_V1_DeviceSessionAccepted()
+    }
+    set {_uniqueStorage()._payload = .deviceSessionAccepted(newValue)}
+  }
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   nonisolated enum OneOf_Payload: Equatable, Sendable {
@@ -1398,6 +1414,8 @@ nonisolated struct Northpane_Bridge_V1_Envelope: @unchecked Sendable {
     case notificationRouteCommand(Northpane_Bridge_V1_NotificationRouteCommand)
     case notificationRouteResult(Northpane_Bridge_V1_NotificationRouteResult)
     case terminalScroll(Northpane_Bridge_V1_TerminalScroll)
+    case deviceSessionProof(Northpane_Bridge_V1_DeviceSessionProof)
+    case deviceSessionAccepted(Northpane_Bridge_V1_DeviceSessionAccepted)
 
   }
 
@@ -1469,6 +1487,12 @@ nonisolated struct Northpane_Bridge_V1_HandshakeAccepted: Sendable {
   /// offer to send it one. Empty from a Bridge that predates revision 14, which reads as "cannot
   /// tell" and never as a platform.
   var hostPlatform: String = String()
+
+  /// Random bytes the Bridge made for this connection alone (revision 20). A paired device signs
+  /// them inside its DeviceSessionProof to prove it holds its key in this session; until it does,
+  /// the identity it declared in HandshakeHello authenticates nothing. Empty from a Bridge that
+  /// predates revision 20, or when the two ends settled on an older revision.
+  var deviceChallenge: Data = Data()
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1957,6 +1981,42 @@ nonisolated struct Northpane_Bridge_V1_PairingProof: Sendable {
 }
 
 nonisolated struct Northpane_Bridge_V1_PairingAccepted: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var clientDeviceID: String = String()
+
+  var observation: Bool = false
+
+  var standardControl: Bool = false
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+/// A paired device proving, in this session, that it holds its key (revision 20). The signature is
+/// P-256 ECDSA (DER) over the statement: each of these fields behind its length as four big-endian
+/// bytes, in this order: "northpane-device-session-v1", the Host ID, the client device ID and the
+/// connection ID as upper-case UUID strings, the negotiated protocol major and schema revision as
+/// decimal strings, HandshakeAccepted.device_challenge and HandshakeHello.host_identity_challenge.
+nonisolated struct Northpane_Bridge_V1_DeviceSessionProof: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var clientDeviceID: String = String()
+
+  var signature: Data = Data()
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+/// The proof was the paired key's: the device is authenticated in this session, with these grants.
+nonisolated struct Northpane_Bridge_V1_DeviceSessionAccepted: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2598,7 +2658,7 @@ nonisolated extension Northpane_Bridge_V1_NotificationRouteCommandKind: SwiftPro
 
 nonisolated extension Northpane_Bridge_V1_Envelope: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".Envelope"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_major\0\u{3}schema_revision\0\u{3}connection_id\0\u{3}channel_id\0\u{3}message_id\0\u{4}\u{5}handshake_hello\0\u{3}handshake_accepted\0\u{1}problem\0\u{3}open_channel\0\u{3}window_update\0\u{3}cancel_channel\0\u{3}close_channel\0\u{3}runtime_snapshot\0\u{3}runtime_events\0\u{1}mutation\0\u{3}mutation_receipt\0\u{3}terminal_input\0\u{3}terminal_acknowledgement\0\u{3}observe_runtime\0\u{3}terminal_attach\0\u{3}terminal_attached\0\u{3}terminal_output\0\u{3}terminal_resize\0\u{3}terminal_release\0\u{1}heartbeat\0\u{3}pairing_challenge_request\0\u{3}pairing_challenge\0\u{3}pairing_proof\0\u{3}pairing_accepted\0\u{3}resource_command\0\u{3}resource_result\0\u{3}authorization_command\0\u{3}authorization_result\0\u{3}notification_route_command\0\u{3}notification_route_result\0\u{3}terminal_scroll\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_major\0\u{3}schema_revision\0\u{3}connection_id\0\u{3}channel_id\0\u{3}message_id\0\u{4}\u{5}handshake_hello\0\u{3}handshake_accepted\0\u{1}problem\0\u{3}open_channel\0\u{3}window_update\0\u{3}cancel_channel\0\u{3}close_channel\0\u{3}runtime_snapshot\0\u{3}runtime_events\0\u{1}mutation\0\u{3}mutation_receipt\0\u{3}terminal_input\0\u{3}terminal_acknowledgement\0\u{3}observe_runtime\0\u{3}terminal_attach\0\u{3}terminal_attached\0\u{3}terminal_output\0\u{3}terminal_resize\0\u{3}terminal_release\0\u{1}heartbeat\0\u{3}pairing_challenge_request\0\u{3}pairing_challenge\0\u{3}pairing_proof\0\u{3}pairing_accepted\0\u{3}resource_command\0\u{3}resource_result\0\u{3}authorization_command\0\u{3}authorization_result\0\u{3}notification_route_command\0\u{3}notification_route_result\0\u{3}terminal_scroll\0\u{3}device_session_proof\0\u{3}device_session_accepted\0")
 
   fileprivate class _StorageClass {
     var _protocolMajor: UInt32 = 0
@@ -3049,6 +3109,32 @@ nonisolated extension Northpane_Bridge_V1_Envelope: SwiftProtobuf.Message, Swift
             _storage._payload = .terminalScroll(v)
           }
         }()
+        case 41: try {
+          var v: Northpane_Bridge_V1_DeviceSessionProof?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .deviceSessionProof(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .deviceSessionProof(v)
+          }
+        }()
+        case 42: try {
+          var v: Northpane_Bridge_V1_DeviceSessionAccepted?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .deviceSessionAccepted(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .deviceSessionAccepted(v)
+          }
+        }()
         default: break
         }
       }
@@ -3201,6 +3287,14 @@ nonisolated extension Northpane_Bridge_V1_Envelope: SwiftProtobuf.Message, Swift
         guard case .terminalScroll(let v)? = _storage._payload else { preconditionFailure() }
         try visitor.visitSingularMessageField(value: v, fieldNumber: 40)
       }()
+      case .deviceSessionProof?: try {
+        guard case .deviceSessionProof(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 41)
+      }()
+      case .deviceSessionAccepted?: try {
+        guard case .deviceSessionAccepted(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 42)
+      }()
       case nil: break
       }
     }
@@ -3299,7 +3393,7 @@ nonisolated extension Northpane_Bridge_V1_HandshakeHello: SwiftProtobuf.Message,
 
 nonisolated extension Northpane_Bridge_V1_HandshakeAccepted: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".HandshakeAccepted"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_major\0\u{3}schema_revision\0\u{3}host_id\0\u{1}capabilities\0\u{3}bridge_version\0\u{3}maximum_frame_bytes\0\u{3}host_signing_public_key\0\u{3}host_identity_signature\0\u{3}herdr_version\0\u{3}bridge_build_id\0\u{3}host_platform\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_major\0\u{3}schema_revision\0\u{3}host_id\0\u{1}capabilities\0\u{3}bridge_version\0\u{3}maximum_frame_bytes\0\u{3}host_signing_public_key\0\u{3}host_identity_signature\0\u{3}herdr_version\0\u{3}bridge_build_id\0\u{3}host_platform\0\u{3}device_challenge\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3318,6 +3412,7 @@ nonisolated extension Northpane_Bridge_V1_HandshakeAccepted: SwiftProtobuf.Messa
       case 9: try { try decoder.decodeSingularStringField(value: &self.herdrVersion) }()
       case 10: try { try decoder.decodeSingularStringField(value: &self.bridgeBuildID) }()
       case 11: try { try decoder.decodeSingularStringField(value: &self.hostPlatform) }()
+      case 12: try { try decoder.decodeSingularBytesField(value: &self.deviceChallenge) }()
       default: break
       }
     }
@@ -3357,6 +3452,9 @@ nonisolated extension Northpane_Bridge_V1_HandshakeAccepted: SwiftProtobuf.Messa
     if !self.hostPlatform.isEmpty {
       try visitor.visitSingularStringField(value: self.hostPlatform, fieldNumber: 11)
     }
+    if !self.deviceChallenge.isEmpty {
+      try visitor.visitSingularBytesField(value: self.deviceChallenge, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3372,6 +3470,7 @@ nonisolated extension Northpane_Bridge_V1_HandshakeAccepted: SwiftProtobuf.Messa
     if lhs.herdrVersion != rhs.herdrVersion {return false}
     if lhs.bridgeBuildID != rhs.bridgeBuildID {return false}
     if lhs.hostPlatform != rhs.hostPlatform {return false}
+    if lhs.deviceChallenge != rhs.deviceChallenge {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4562,6 +4661,81 @@ nonisolated extension Northpane_Bridge_V1_PairingAccepted: SwiftProtobuf.Message
   }
 
   static func ==(lhs: Northpane_Bridge_V1_PairingAccepted, rhs: Northpane_Bridge_V1_PairingAccepted) -> Bool {
+    if lhs.clientDeviceID != rhs.clientDeviceID {return false}
+    if lhs.observation != rhs.observation {return false}
+    if lhs.standardControl != rhs.standardControl {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Bridge_V1_DeviceSessionProof: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".DeviceSessionProof"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}client_device_id\0\u{1}signature\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.clientDeviceID) }()
+      case 2: try { try decoder.decodeSingularBytesField(value: &self.signature) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.clientDeviceID.isEmpty {
+      try visitor.visitSingularStringField(value: self.clientDeviceID, fieldNumber: 1)
+    }
+    if !self.signature.isEmpty {
+      try visitor.visitSingularBytesField(value: self.signature, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Bridge_V1_DeviceSessionProof, rhs: Northpane_Bridge_V1_DeviceSessionProof) -> Bool {
+    if lhs.clientDeviceID != rhs.clientDeviceID {return false}
+    if lhs.signature != rhs.signature {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Bridge_V1_DeviceSessionAccepted: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".DeviceSessionAccepted"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}client_device_id\0\u{1}observation\0\u{3}standard_control\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.clientDeviceID) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.observation) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.standardControl) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.clientDeviceID.isEmpty {
+      try visitor.visitSingularStringField(value: self.clientDeviceID, fieldNumber: 1)
+    }
+    if self.observation != false {
+      try visitor.visitSingularBoolField(value: self.observation, fieldNumber: 2)
+    }
+    if self.standardControl != false {
+      try visitor.visitSingularBoolField(value: self.standardControl, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Bridge_V1_DeviceSessionAccepted, rhs: Northpane_Bridge_V1_DeviceSessionAccepted) -> Bool {
     if lhs.clientDeviceID != rhs.clientDeviceID {return false}
     if lhs.observation != rhs.observation {return false}
     if lhs.standardControl != rhs.standardControl {return false}

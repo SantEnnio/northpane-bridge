@@ -107,6 +107,10 @@ public actor NorthpaneBridgeClient {
     public nonisolated let deviceID: ClientDeviceID
     private let transport: any BridgeTransport
     private var accepted: HandshakeAccepted?
+    /// Whether the Bridge verified, in this session, that this device holds its key (revision 20):
+    /// by the session proof or by pairing in it. False against a Bridge older than revision 20,
+    /// which takes a declared identity, and while a device the Host does not know is not paired.
+    public private(set) var deviceProven = false
     private var receiverTask: Task<Void, Never>?
     private var pendingResponses: [MessageID: EnvelopePromise] = [:]
     private var resourceQueues: [UUID: ResourceResultQueue] = [:]
@@ -124,16 +128,44 @@ public actor NorthpaneBridgeClient {
     /// means, not merely because the number moved.
     public static let oldestSchemaRevisionSpoken = 14
 
+    /// Opens the session. With the device's `signer`, a Bridge of revision 20 or later is then
+    /// shown that this device holds its key; without one, or against an older Bridge, the device
+    /// is only declared, and a Bridge of revision 20 grants a declared device nothing.
     @discardableResult
-    public func handshake(expectedHostFingerprint: String? = nil, clientVersion: String = "development") async throws -> HandshakeAccepted {
+    public func handshake(expectedHostFingerprint: String? = nil, clientVersion: String = "development", signer: ClientDeviceSigner? = nil) async throws -> HandshakeAccepted {
+        try await handshake(expectedHostFingerprint: expectedHostFingerprint, clientVersion: clientVersion, signer: signer, newestSchemaRevision: BridgeProtocol.schemaRevision)
+    }
+
+    /// `newestSchemaRevision` lets a test speak as an older client.
+    func handshake(expectedHostFingerprint: String?, clientVersion: String, signer: ClientDeviceSigner?, newestSchemaRevision: Int) async throws -> HandshakeAccepted {
         let challenge = Data((0..<32).map { _ in UInt8.random(in: .min ... .max) })
-        let hello = HandshakeHello(protocolRange: .init(minimum: 1, maximum: BridgeProtocol.major), schemaRange: .init(minimum: Self.oldestSchemaRevisionSpoken, maximum: BridgeProtocol.schemaRevision), clientDeviceID: deviceID, clientVersion: clientVersion, hostIdentityChallenge: challenge, expectedHostFingerprint: expectedHostFingerprint)
+        let hello = HandshakeHello(protocolRange: .init(minimum: 1, maximum: BridgeProtocol.major), schemaRange: .init(minimum: Self.oldestSchemaRevisionSpoken, maximum: newestSchemaRevision), clientDeviceID: deviceID, clientVersion: clientVersion, hostIdentityChallenge: challenge, expectedHostFingerprint: expectedHostFingerprint)
         let response = try await request(.hello(hello))
         switch response.payload {
         case let .accepted(accepted):
             _ = try verifyHostHandshake(hello: hello, accepted: accepted)
             self.accepted = accepted
+            deviceProven = false
+            if let signer, signer.deviceID == deviceID,
+               accepted.schemaRevision >= BridgeProtocol.deviceSessionProofRevision, !accepted.deviceChallenge.isEmpty {
+                try await proveDevice(with: signer, accepted: accepted, hostIdentityChallenge: challenge)
+            }
             return accepted
+        case let .problem(problem): throw problem
+        default: throw Problem.malformedFrame
+        }
+    }
+
+    /// Signs this session's statement. A device the Host has not paired is not a failure here: it
+    /// is asked to pair, as before, when it first needs a grant.
+    private func proveDevice(with signer: ClientDeviceSigner, accepted: HandshakeAccepted, hostIdentityChallenge: Data) async throws {
+        let statement = DeviceSessionStatement(hostID: accepted.hostID, deviceID: deviceID, connectionID: connectionID,
+            protocolMajor: accepted.protocolMajor, schemaRevision: accepted.schemaRevision,
+            bridgeChallenge: accepted.deviceChallenge, hostIdentityChallenge: hostIdentityChallenge)
+        let response = try await request(.deviceSessionProof(.init(clientDeviceID: deviceID, signature: try signer.prove(statement))))
+        switch response.payload {
+        case .deviceSessionAccepted: deviceProven = true
+        case let .problem(problem) where problem.code == "device_not_paired": deviceProven = false
         case let .problem(problem): throw problem
         default: throw Problem.malformedFrame
         }
@@ -162,7 +194,9 @@ public actor NorthpaneBridgeClient {
         let proof = try signer.prove(PairingChallenge(id: challenge.challengeID, hostID: challenge.hostID, nonce: challenge.nonce, expiresAt: challenge.expiresAt))
         let result = try await request(.pairingProof(.init(clientDeviceID: proof.deviceID, challengeID: proof.challengeID, publicKey: proof.publicKey, signature: proof.signature)))
         switch result.payload {
-        case let .pairingAccepted(accepted): return accepted
+        case let .pairingAccepted(paired):
+            deviceProven = (accepted?.schemaRevision ?? 0) >= BridgeProtocol.deviceSessionProofRevision
+            return paired
         case let .problem(problem): throw problem
         default: throw Problem.malformedFrame
         }
@@ -659,7 +693,8 @@ public actor NorthpaneBridgeClient {
         finishReceiver(with: Problem.closedTransport)
     }
 
-    private func request(_ payload: EnvelopePayload, channelID: ChannelID? = nil) async throws -> Envelope {
+    /// Internal so that a test can speak the protocol a message at a time.
+    func request(_ payload: EnvelopePayload, channelID: ChannelID? = nil) async throws -> Envelope {
         ensureReceiver()
         let message = envelope(payload, channelID: channelID)
         let promise = EnvelopePromise()

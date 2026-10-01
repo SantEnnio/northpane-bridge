@@ -560,8 +560,9 @@ private final class TestCertificateDelegate: NSObject, URLSessionDelegate, @unch
     #expect(try Data(contentsOf: URL(fileURLWithPath: sent.path)) == sentBytes)
     await client.close()
 
+    // A returning device proves its key again (revision 20): its ID alone is not enough.
     let returningClient = NorthpaneBridgeClient(transport: try UnixSocketBridgeTransport(path: socket.path), deviceID: signer.deviceID)
-    _ = try await returningClient.handshake()
+    _ = try await returningClient.handshake(signer: signer)
     let returningSnapshot = try await returningClient.observe()
     #expect(returningSnapshot.snapshotID != snapshot.snapshotID)
     let receipt = try await returningClient.revokeThisDevice()
@@ -570,7 +571,8 @@ private final class TestCertificateDelegate: NSObject, URLSessionDelegate, @unch
     await returningClient.close()
 
     let revokedClient = NorthpaneBridgeClient(transport: try UnixSocketBridgeTransport(path: socket.path), deviceID: signer.deviceID)
-    _ = try await revokedClient.handshake()
+    _ = try await revokedClient.handshake(signer: signer)
+    #expect(await revokedClient.deviceProven == false)
     await #expect(throws: Problem.self) { try await revokedClient.observe() }
     await revokedClient.close()
 }

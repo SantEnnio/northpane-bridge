@@ -277,6 +277,28 @@ public struct WirePairingAccepted: Equatable, Codable, Sendable {
     }
 }
 
+/// A paired device proving, in this Bridge session, that it holds its key (revision 20): its
+/// signature over the session's `DeviceSessionStatement`, made with the challenge the Bridge sent
+/// in `HandshakeAccepted.deviceChallenge`.
+public struct DeviceSessionProof: Equatable, Codable, Sendable {
+    public let clientDeviceID: ClientDeviceID
+    public let signature: Data
+    public init(clientDeviceID: ClientDeviceID, signature: Data) {
+        self.clientDeviceID = clientDeviceID; self.signature = signature
+    }
+}
+
+/// The Bridge's answer to a proof it verified: the device is now authenticated in this session,
+/// with the grants the Host holds for it.
+public struct DeviceSessionAccepted: Equatable, Codable, Sendable {
+    public let clientDeviceID: ClientDeviceID
+    public let observation: Bool
+    public let standardControl: Bool
+    public init(clientDeviceID: ClientDeviceID, observation: Bool, standardControl: Bool) {
+        self.clientDeviceID = clientDeviceID; self.observation = observation; self.standardControl = standardControl
+    }
+}
+
 public enum ResourceCommandKind: String, Codable, Sendable {
     case listResources, registerPreview, updatePreview, closePreview, fetchPreviewHTTP
     case publishArtifact, readArtifact, deleteArtifact, listArtifactEntries

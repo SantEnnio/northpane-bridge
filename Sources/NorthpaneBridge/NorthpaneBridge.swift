@@ -228,6 +228,15 @@ struct NorthpaneBridge {
             bridgeBuildID: buildID)
         var authenticatedDevice: ClientDeviceID?
         var presentedDevice: ClientDeviceID?
+        /// Whether `authenticatedDevice` proved its key in this session (revision 20, or a pairing
+        /// made in it), as opposed to having been declared by a client of an older revision.
+        var identityProven = false
+        /// What the session was opened with, for the statement the device signs.
+        var sessionAccepted: HandshakeAccepted?
+        var sessionConnectionID: ConnectionID?
+        var sessionHostIdentityChallenge = Data()
+        /// The challenge waiting for its proof: one attempt per session.
+        var pendingDeviceChallenge: Data?
         let observation = BridgeConnectionObservation()
         var eventSubscription: HerdrEventSubscription?
         let agentStatusSubscriptions = AgentStatusSubscriptions()
@@ -239,21 +248,99 @@ struct NorthpaneBridge {
             Task { await terminalRegistry.stopAll() }
             Task { await previewTunnels.stopAll() }
         }
+        /// Whether the authenticated device holds terminal control as the pairing file says now.
+        func deviceMayControl() async -> Bool {
+            guard let device = authenticatedDevice else { return false }
+            return (try? await authority.authorize(deviceID: device, capability: .terminalControl)) != nil
+        }
+        /// Names the device only when it proved its key in this session. An identity a client of an
+        /// older revision merely declared goes in the reason, as declared, and not in `deviceID`.
+        func audit(category: String, reference: String, outcome: String, reason: String) async {
+            guard let device = authenticatedDevice, !identityProven else {
+                try? await context.audit(deviceID: authenticatedDevice, category: category, reference: reference, outcome: outcome, reason: reason)
+                return
+            }
+            try? await context.audit(deviceID: nil, category: category, reference: reference, outcome: outcome,
+                                     reason: "\(reason);declared-device:\(device.rawValue.uuidString)")
+        }
         while true {
             let request = try await transport.receive()
             let responsePayload: EnvelopePayload
+            // Another Bridge process — every SSH connection is one — may have revoked this device or
+            // changed its grants since it authenticated. What the pairing file says now decides,
+            // before anything else this session asks is looked at; a device no longer paired loses
+            // its terminals and its subscriptions first.
+            switch request.payload {
+            case .hello, .pairingChallengeRequest, .pairingProof, .deviceSessionProof: break
+            default:
+                guard let device = authenticatedDevice else { break }
+                await context.refreshPairings()
+                guard await authority.pairedDevice(device) == nil else { break }
+                await audit(category: "revocation", reference: "session", outcome: "applied", reason: "device-no-longer-paired")
+                await terminalRegistry.stopAll()
+                await previewTunnels.stopAll()
+                await observation.subscriptionClosed()
+                eventSubscription?.stop()
+                eventSubscription = nil
+                await agentStatusSubscriptions.stop()
+                authenticatedDevice = nil
+                identityProven = false
+                try await transport.send(Envelope(protocolMajor: request.protocolMajor, schemaRevision: request.schemaRevision, connectionID: request.connectionID, channelID: request.channelID, messageID: request.messageID, payload: .problem(Problem(code: "device_revoked", locus: .bridge, retry: .afterUserAction, recoveryAction: "pairDevice", phase: .trust))))
+                continue
+            }
             switch request.payload {
             case let .hello(hello):
                 let response = await responder.respond(to: request)
-                if case .accepted = response.payload {
+                authenticatedDevice = nil
+                identityProven = false
+                pendingDeviceChallenge = nil
+                if case let .accepted(accepted) = response.payload {
                     presentedDevice = hello.clientDeviceID
-                    do {
-                        try await authority.authorize(deviceID: hello.clientDeviceID, capability: .observeRuntime)
-                        authenticatedDevice = hello.clientDeviceID
-                    } catch { authenticatedDevice = nil }
+                    sessionAccepted = accepted
+                    sessionConnectionID = request.connectionID
+                    sessionHostIdentityChallenge = hello.hostIdentityChallenge
+                    if accepted.schemaRevision >= BridgeProtocol.deviceSessionProofRevision {
+                        // Authenticated only once it proves its key (`.deviceSessionProof`).
+                        pendingDeviceChallenge = accepted.deviceChallenge
+                    } else {
+                        // A client of an older revision can only declare who it is. That is still
+                        // taken from a device that never proved its key, and no longer from one that
+                        // has: a declared identity is how a downgrade would impersonate it.
+                        await context.refreshPairings()
+                        if let device = await authority.pairedDevice(hello.clientDeviceID), !device.requiresSessionProof,
+                           (try? await authority.authorize(deviceID: device.deviceID, capability: .observeRuntime)) != nil {
+                            authenticatedDevice = device.deviceID
+                        }
+                    }
                 }
                 try await transport.send(response)
                 continue
+            case let .deviceSessionProof(proof):
+                guard let challenge = pendingDeviceChallenge, let accepted = sessionAccepted, let connectionID = sessionConnectionID,
+                      proof.clientDeviceID == presentedDevice else {
+                    responsePayload = .problem(Problem(code: "device_proof_unexpected", locus: .bridge, retry: .afterReconnect, recoveryAction: "restartHandshake", phase: .handshake))
+                    break
+                }
+                // One attempt per session: a wrong proof does not get to try again on the same challenge.
+                pendingDeviceChallenge = nil
+                let statement = DeviceSessionStatement(hostID: accepted.hostID, deviceID: proof.clientDeviceID, connectionID: connectionID,
+                    protocolMajor: accepted.protocolMajor, schemaRevision: accepted.schemaRevision,
+                    bridgeChallenge: challenge, hostIdentityChallenge: sessionHostIdentityChallenge)
+                await context.refreshPairings()
+                do {
+                    let device = try await authority.verifySession(statement, signature: proof.signature)
+                    authenticatedDevice = device.deviceID
+                    identityProven = true
+                    // From the first proof on, a declared identity no longer stands for this device.
+                    if !device.requiresSessionProof { try? await context.requireSessionProof(for: device.deviceID) }
+                    responsePayload = .deviceSessionAccepted(.init(clientDeviceID: device.deviceID,
+                        observation: device.grant.grants.contains(.observation), standardControl: device.grant.grants.contains(.standardControl)))
+                } catch PairingError.invalidSignature {
+                    try? await context.audit(deviceID: nil, category: "authentication", reference: "device:\(proof.clientDeviceID.rawValue.uuidString)", outcome: "rejected", reason: "invalid-session-proof")
+                    responsePayload = .problem(Problem(code: "device_proof_invalid", locus: .bridge, retry: .never, recoveryAction: "restartHandshake", phase: .trust))
+                } catch {
+                    responsePayload = .problem(Problem(code: "device_not_paired", locus: .bridge, retry: .afterUserAction, recoveryAction: "pairDevice", phase: .pairing))
+                }
             case .pairingChallengeRequest:
                 guard presentedDevice != nil else {
                     responsePayload = .problem(Problem(code: "handshake_required", locus: .bridge, retry: .afterReconnect, recoveryAction: "restartHandshake", phase: .handshake))
@@ -267,19 +354,33 @@ struct NorthpaneBridge {
                     break
                 }
                 do {
-                    let paired = try await authority.pair(.init(deviceID: proof.clientDeviceID, challengeID: proof.challengeID, publicKey: proof.publicKey, signature: proof.signature), grant: .standard)
-                    try await context.persistPairing()
-                    try? await context.audit(deviceID: paired.deviceID, category: "pairing", reference: "device", outcome: "applied", reason: "proof-verified")
+                    let requiresSessionProof = (sessionAccepted?.schemaRevision ?? 0) >= BridgeProtocol.deviceSessionProofRevision
+                    let paired = try await context.changePairings {
+                        try await authority.pair(.init(deviceID: proof.clientDeviceID, challengeID: proof.challengeID, publicKey: proof.publicKey, signature: proof.signature),
+                                                 grant: .standard, requiresSessionProof: requiresSessionProof)
+                    }
+                    // The proof was signed with the device's key over a fresh challenge: pairing
+                    // authenticates the session as much as a session proof does.
                     authenticatedDevice = paired.deviceID
+                    identityProven = true
+                    pendingDeviceChallenge = nil
+                    await audit(category: "pairing", reference: "device", outcome: "applied", reason: "proof-verified")
                     responsePayload = .pairingAccepted(.init(clientDeviceID: paired.deviceID, observation: paired.grant.grants.contains(.observation), standardControl: paired.grant.grants.contains(.standardControl)))
+                } catch PairingError.keyConflict {
+                    try? await context.audit(deviceID: nil, category: "pairing", reference: "device:\(proof.clientDeviceID.rawValue.uuidString)", outcome: "rejected", reason: "paired-with-another-key")
+                    responsePayload = .problem(Problem(code: "pairing_identity_conflict", locus: .bridge, retry: .never, recoveryAction: "resetDeviceIdentity", phase: .pairing))
                 } catch {
-                    try? await context.audit(deviceID: proof.clientDeviceID, category: "pairing", reference: "device", outcome: "rejected", reason: "invalid-proof")
+                    try? await context.audit(deviceID: nil, category: "pairing", reference: "device:\(proof.clientDeviceID.rawValue.uuidString)", outcome: "rejected", reason: "invalid-proof")
                     responsePayload = .problem(Problem(code: "pairing_proof_invalid", locus: .bridge, retry: .afterUserAction, recoveryAction: "restartPairing", phase: .pairing))
                 }
             case let .observeRuntime(observe):
                 let verifiedLocalProcess = (transport as? ByteStreamBridgeTransport)?.verifiedLocalPeerProcessID
                 let unpairedLocalObservation = (transport as? ByteStreamBridgeTransport)?.unpairedLocalObservationAllowed == true
-                guard authenticatedDevice != nil || (transport.kind == .localIPC && verifiedLocalProcess != nil && unpairedLocalObservation) else {
+                let deviceMayObserve: Bool
+                if let device = authenticatedDevice {
+                    deviceMayObserve = (try? await authority.authorize(deviceID: device, capability: .observeRuntime)) != nil
+                } else { deviceMayObserve = false }
+                guard deviceMayObserve || (transport.kind == .localIPC && verifiedLocalProcess != nil && unpairedLocalObservation) else {
                     responsePayload = .problem(.unauthorized)
                     break
                 }
@@ -353,6 +454,10 @@ struct NorthpaneBridge {
                     responsePayload = .problem(Problem(code: "stale_terminal_attachment", locus: .bridge, retry: .afterRefresh, recoveryAction: "refreshSnapshot", phase: .terminal))
                     break
                 }
+                guard (try? await authority.authorize(deviceID: device, capability: attach.mode == .observe ? .terminalObserve : .terminalControl)) != nil else {
+                    responsePayload = .problem(.unauthorized)
+                    break
+                }
                 let attachmentID = UUID()
                 let mode: HerdrTerminalSession.Mode = switch attach.mode { case .observe: .observe; case .control: .control; case .takeover: .takeover }
                 let session: HerdrTerminalSession
@@ -365,7 +470,7 @@ struct NorthpaneBridge {
                 await terminalRegistry.add(session, mode: attach.mode, id: attachmentID, paneID: attach.paneID,
                                            columns: attach.columns, rows: attach.rows)
                 if attach.mode == .takeover {
-                    try? await context.audit(deviceID: device, category: "takeover", reference: "pane", outcome: "applied", reason: "current-observation")
+                    await audit(category: "takeover", reference: "pane", outcome: "applied", reason: "current-observation")
                 }
                     try await transport.send(Envelope(protocolMajor: request.protocolMajor, schemaRevision: request.schemaRevision, connectionID: request.connectionID, channelID: request.channelID, messageID: request.messageID, payload: .terminalAttached(TerminalAttached(attachmentID: attachmentID, paneID: attach.paneID, mode: attach.mode, controllerDeviceID: attach.mode == .observe ? nil : device))))
                 do {
@@ -392,6 +497,12 @@ struct NorthpaneBridge {
                 }
                 continue
             case let .terminalInput(frame):
+                // A grant reduced in another process closes the attachment before it accepts more.
+                if let entry = await terminalRegistry.entry(frame.attachmentID), entry.mode != .observe, !(await deviceMayControl()) {
+                    if let removed = await terminalRegistry.remove(frame.attachmentID) { try? removed.release(); removed.stop() }
+                    responsePayload = .problem(.unauthorized)
+                    break
+                }
                 guard let entry = await terminalRegistry.entry(frame.attachmentID), entry.mode != .observe else {
                     responsePayload = .problem(Problem(code: "terminal_control_required", locus: .bridge, retry: .afterUserAction, recoveryAction: "acquireControl", phase: .terminal))
                     break
@@ -411,6 +522,12 @@ struct NorthpaneBridge {
                     responsePayload = .problem(Problem(code: "terminal_input_gap", locus: .bridge, retry: .never, recoveryAction: "discardPendingInput", phase: .terminal))
                 }
             case let .terminalResize(resize):
+                // A grant reduced in another process closes the attachment before it accepts more.
+                if let entry = await terminalRegistry.entry(resize.attachmentID), entry.mode != .observe, !(await deviceMayControl()) {
+                    if let removed = await terminalRegistry.remove(resize.attachmentID) { try? removed.release(); removed.stop() }
+                    responsePayload = .problem(.unauthorized)
+                    break
+                }
                 guard let entry = await terminalRegistry.entry(resize.attachmentID), entry.mode != .observe else {
                     responsePayload = .problem(Problem(code: "terminal_control_required", locus: .bridge, retry: .afterUserAction, recoveryAction: "acquireControl", phase: .terminal))
                     break
@@ -422,6 +539,12 @@ struct NorthpaneBridge {
                 }
                 catch { responsePayload = .problem(Problem(code: "terminal_resize_failed", locus: .herdr, retry: .afterRefresh, recoveryAction: "reattachReadOnly", phase: .terminal)) }
             case let .terminalScroll(scroll):
+                // A grant reduced in another process closes the attachment before it accepts more.
+                if let entry = await terminalRegistry.entry(scroll.attachmentID), entry.mode != .observe, !(await deviceMayControl()) {
+                    if let removed = await terminalRegistry.remove(scroll.attachmentID) { try? removed.release(); removed.stop() }
+                    responsePayload = .problem(.unauthorized)
+                    break
+                }
                 // Herdr streams a rendered viewport, so scrollback is paged on the Host. Only a control
                 // stream honours the command; observe streams silently ignore it, so require control.
                 guard let entry = await terminalRegistry.entry(scroll.attachmentID), entry.mode != .observe else {
@@ -473,7 +596,7 @@ struct NorthpaneBridge {
                         try await authority.authorize(deviceID: device, capability: .observeRuntime)
                         let sessionName = mutation.targetID == "herdr:start" ? nil : String(mutation.targetID.dropFirst("herdr:start:".count))
                         try await context.startHerdr(sessionName: sessionName)
-                        try? await context.audit(deviceID: device, category: "herdr", reference: "server", outcome: "applied", reason: "client-requested-start")
+                        await audit(category: "herdr", reference: "server", outcome: "applied", reason: "client-requested-start")
                         let receipt = WireMutationReceipt(commandID: mutation.commandID, outcome: .applied)
                         await context.remember(receipt)
                         responsePayload = .mutationReceipt(receipt)
@@ -506,7 +629,7 @@ struct NorthpaneBridge {
                             agentKind: mutation.workspaceAgentKind,
                             sessionName: await observation.sessionName
                         )
-                        try? await context.audit(deviceID: device, category: "workspace", reference: created.workspaceID,
+                        await audit(category: "workspace", reference: created.workspaceID,
                                                  outcome: "applied", reason: created.agentStartFailed ? "client-requested-create-agent-failed" : "client-requested-create")
                         let launchProblem = created.agentStartFailed
                             ? Problem(code: "workspace_agent_start_failed", locus: .herdr, retry: .afterUserAction,
@@ -564,7 +687,7 @@ struct NorthpaneBridge {
                         let created = try await context.createPane(workspaceID: workspaceID, workingDirectory: directory,
                                                                    agentKind: mutation.workspaceAgentKind,
                                                                    sessionName: await observation.sessionName)
-                        try? await context.audit(deviceID: device, category: "pane", reference: created.paneID,
+                        await audit(category: "pane", reference: created.paneID,
                                                  outcome: "applied", reason: created.agentStartFailed ? "client-requested-create-agent-failed" : "client-requested-create")
                         let launchProblem = created.agentStartFailed
                             ? Problem(code: "workspace_agent_start_failed", locus: .herdr, retry: .afterUserAction,
@@ -618,7 +741,7 @@ struct NorthpaneBridge {
                         let created = try await context.splitPane(paneID: paneID, direction: direction, workingDirectory: directory,
                                                                   agentKind: mutation.workspaceAgentKind,
                                                                   sessionName: await observation.sessionName)
-                        try? await context.audit(deviceID: device, category: "pane", reference: created.paneID,
+                        await audit(category: "pane", reference: created.paneID,
                                                  outcome: "applied", reason: created.agentStartFailed ? "client-requested-split-agent-failed" : "client-requested-split")
                         let launchProblem = created.agentStartFailed
                             ? Problem(code: "workspace_agent_start_failed", locus: .herdr, retry: .afterUserAction,
@@ -664,7 +787,7 @@ struct NorthpaneBridge {
                         }
                         try await context.renameWorkspace(workspaceID: workspaceID, label: mutation.workspaceLabel,
                                                           sessionName: await observation.sessionName)
-                        try? await context.audit(deviceID: device, category: "workspace", reference: workspaceID,
+                        await audit(category: "workspace", reference: workspaceID,
                                                  outcome: "applied", reason: "client-requested-rename")
                         let receipt = WireMutationReceipt(commandID: mutation.commandID, outcome: .applied,
                                                           workspaceID: workspaceID)
@@ -695,7 +818,7 @@ struct NorthpaneBridge {
                                           recoveryAction: "refreshSnapshot", phase: .mutation)
                         }
                         try await context.closeWorkspace(workspaceID: workspaceID, sessionName: await observation.sessionName)
-                        try? await context.audit(deviceID: device, category: "workspace", reference: workspaceID,
+                        await audit(category: "workspace", reference: workspaceID,
                                                  outcome: "applied", reason: "client-requested-close")
                         let receipt = WireMutationReceipt(commandID: mutation.commandID, outcome: .applied,
                                                           workspaceID: workspaceID)
@@ -714,11 +837,12 @@ struct NorthpaneBridge {
                 }
                 if mutation.targetID == "device:\(device.rawValue.uuidString):grant:authorizationBroker" {
                     do {
-                        guard var paired = await authority.allPairedDevices().first(where: { $0.deviceID == device }) else { throw PairingError.revoked }
-                        paired.grant.grants.insert(.authorizationBroker)
-                        try await authority.updateGrant(paired.grant, for: device)
-                        try await context.persistPairing()
-                        try? await context.audit(deviceID: device, category: "grant", reference: "authorizationBroker", outcome: "applied", reason: "client-confirmed")
+                        try await context.changePairings {
+                            guard var paired = await authority.pairedDevice(device) else { throw PairingError.revoked }
+                            paired.grant.grants.insert(.authorizationBroker)
+                            try await authority.updateGrant(paired.grant, for: device)
+                        }
+                        await audit(category: "grant", reference: "authorizationBroker", outcome: "applied", reason: "client-confirmed")
                         let receipt = WireMutationReceipt(commandID: mutation.commandID, outcome: .applied)
                         await context.remember(receipt)
                         responsePayload = .mutationReceipt(receipt)
@@ -734,9 +858,8 @@ struct NorthpaneBridge {
                     responsePayload = .mutationReceipt(receipt)
                     break
                 }
-                await authority.revoke(device)
-                try await context.persistPairing()
-                try? await context.audit(deviceID: device, category: "revocation", reference: "device", outcome: "applied", reason: "client-requested")
+                try await context.changePairings { await authority.revoke(device) }
+                await audit(category: "revocation", reference: "device", outcome: "applied", reason: "client-requested")
                 await terminalRegistry.stopAll()
                 await observation.subscriptionClosed()
                 eventSubscription?.stop()
@@ -764,7 +887,7 @@ struct NorthpaneBridge {
                         guard let device = authenticatedDevice, let requestID = command.requestID else { throw Problem.unauthorized }
                         try await authority.authorize(deviceID: device, capability: .authorizationBroker)
                         requests = [try await context.authorizationService.approve(id: requestID, expectedRevision: command.expectedRevision)]
-                        try? await context.audit(deviceID: device, category: "authorization", reference: requestID.uuidString, outcome: "approved", reason: "revision-confirmed")
+                        await audit(category: "authorization", reference: requestID.uuidString, outcome: "approved", reason: "revision-confirmed")
                     case .status:
                         guard let requestID = command.requestID else { throw Problem.malformedFrame }
                         if let device = authenticatedDevice {
@@ -778,7 +901,7 @@ struct NorthpaneBridge {
                         if let device = authenticatedDevice {
                             try await authority.authorize(deviceID: device, capability: .authorizationBroker)
                             requests = [try await context.authorizationService.cancel(id: requestID, expectedRevision: command.expectedRevision)]
-                            try? await context.audit(deviceID: device, category: "authorization", reference: requestID.uuidString, outcome: "cancelled", reason: "client-requested")
+                            await audit(category: "authorization", reference: requestID.uuidString, outcome: "cancelled", reason: "client-requested")
                         } else if let localProcessID {
                             requests = [try await context.authorizationService.cancel(id: requestID, expectedRevision: command.expectedRevision, processID: localProcessID)]
                         } else { throw Problem.unauthorized }
@@ -794,7 +917,7 @@ struct NorthpaneBridge {
                     guard let device = authenticatedDevice else { throw Problem.unauthorized }
                     try await authority.authorize(deviceID: device, capability: .notifications)
                     responsePayload = .notificationRouteResult(try await context.handleNotificationRoute(command, deviceID: device))
-                    try? await context.audit(deviceID: device, category: "notification-route", reference: command.routeID?.uuidString ?? "all",
+                    await audit(category: "notification-route", reference: command.routeID?.uuidString ?? "all",
                         outcome: "applied", reason: command.kind.rawValue)
                 } catch let problem as Problem {
                     responsePayload = .problem(problem)
@@ -894,7 +1017,7 @@ struct NorthpaneBridge {
                     default:
                         responsePayload = .resourceResult(try await context.handleResource(command, transportKind: transport.kind, snapshot: snapshot))
                         if command.kind == .setAgentUsageConsent {
-                            try? await context.audit(deviceID: authenticatedDevice, category: "agent-usage-consent", reference: command.targetID,
+                            await audit(category: "agent-usage-consent", reference: command.targetID,
                                 outcome: command.consent ? "accepted" : "withdrawn", reason: "client-requested")
                         }
                     }
@@ -1168,6 +1291,8 @@ private actor BridgeHostContext {
     nonisolated let authority: PairingAuthority
     nonisolated let authorizationService: GitHubAuthorizationService
     private let pairingFile: URL
+    /// The version of the pairing file `authority` holds, to know when another process changed it.
+    private var loadedPairingVersion: HostPairingFile.Version?
     private let stateDirectory: URL
     private let previewStore: PreviewStore
     private let notificationRoutes: NotificationRouteRegistry
@@ -1224,6 +1349,7 @@ private actor BridgeHostContext {
             encryptionKey: auditKey,
             legacyPlaintextURL: stateDirectory.appending(path: "audit/host-audit-v1.json")
         )
+        loadedPairingVersion = HostPairingFile.version(at: pairingFile)
         authority = try PairingAuthority(hostID: stored.hostID, rawPrivateKey: stored.privateKey, pairedDevices: HostPairingFile.load(at: pairingFile, hostID: stored.hostID))
         authorizationService = GitHubAuthorizationService(hostID: stored.hostID,
             clientID: environment["NORTHPANE_GITHUB_CLIENT_ID"],
@@ -1414,8 +1540,32 @@ private actor BridgeHostContext {
         return HerdrTerminalSession(executableURL: executable, paneID: paneID, sessionName: sessionName, mode: mode)
     }
 
-    func persistPairing() async throws {
-        try HostPairingFile.save(await authority.allPairedDevices(), hostID: authority.identity.hostID, at: pairingFile)
+    /// Takes in what another Bridge process wrote to the pairing file since this one read it. A file
+    /// that cannot be read pairs nobody: authority fails closed.
+    func refreshPairings() async {
+        let version = HostPairingFile.version(at: pairingFile)
+        guard version != loadedPairingVersion else { return }
+        let devices = (try? HostPairingFile.load(at: pairingFile, hostID: authority.identity.hostID)) ?? []
+        await authority.replacePairedDevices(devices)
+        loadedPairingVersion = version
+    }
+
+    /// Changes the pairings holding the lock every Bridge process on this Host takes: the change is
+    /// made to what the file says now, not to what this process read earlier, and written before
+    /// anyone else may change it.
+    func changePairings<T>(_ change: () async throws -> T) async throws -> T {
+        let lock = try HostPairingFile.lock(at: pairingFile)
+        defer { lock.unlock() }
+        let hostID = authority.identity.hostID
+        await authority.replacePairedDevices(try HostPairingFile.load(at: pairingFile, hostID: hostID))
+        let result = try await change()
+        try HostPairingFile.save(await authority.allPairedDevices(), hostID: hostID, at: pairingFile)
+        loadedPairingVersion = HostPairingFile.version(at: pairingFile)
+        return result
+    }
+
+    func requireSessionProof(for deviceID: ClientDeviceID) async throws {
+        try await changePairings { try await authority.requireSessionProof(for: deviceID) }
     }
 
     func receipt(for commandID: UUID, now: Date = Date()) -> WireMutationReceipt? {

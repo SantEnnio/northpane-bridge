@@ -6,8 +6,12 @@ public enum NorthpaneRelease {
 
 public enum BridgeProtocol {
     public static let major = 1
-    public static let schemaRevision = 19
+    public static let schemaRevision = 20
     public static let maximumFrameBytes = 1_048_576
+    /// The first revision whose sessions authenticate the Client device by a proof of its key
+    /// (`HandshakeAccepted.deviceChallenge`, `DeviceSessionProof`) rather than by the identity it
+    /// declares in `HandshakeHello`.
+    public static let deviceSessionProofRevision = 20
 }
 
 /// The Herdr releases the live conformance run (`liveHerdrConformance`) has certified: 0.8.2 (protocol 20,
@@ -179,8 +183,12 @@ public struct HandshakeAccepted: Codable, Equatable, Sendable {
     /// Mac app, the only copy its screen-recording permission is bound to. Empty from a Bridge
     /// that predates revision 14, which reads as "cannot tell" and never as a platform.
     public let hostPlatform: String
-    public init(protocolMajor: Int, schemaRevision: Int, hostID: HostID, capabilities: Set<Capability>, bridgeVersion: String = "development", maximumFrameBytes: Int = BridgeProtocol.maximumFrameBytes, hostSigningPublicKey: Data = Data(), hostIdentitySignature: Data = Data(), herdrVersion: String = "unknown", bridgeBuildID: String = "", hostPlatform: String = "") {
-        self.protocolMajor = protocolMajor; self.schemaRevision = schemaRevision; self.hostID = hostID; self.capabilities = capabilities; self.bridgeVersion = bridgeVersion; self.maximumFrameBytes = maximumFrameBytes; self.hostSigningPublicKey = hostSigningPublicKey; self.hostIdentitySignature = hostIdentitySignature; self.herdrVersion = herdrVersion; self.bridgeBuildID = bridgeBuildID; self.hostPlatform = hostPlatform
+    /// Random bytes the Bridge made for this connection alone (revision 20): a paired device
+    /// signs them, inside a `DeviceSessionStatement`, to prove it holds its key in this session.
+    /// Empty from a Bridge that predates revision 20, or when the two ends settled on an older one.
+    public let deviceChallenge: Data
+    public init(protocolMajor: Int, schemaRevision: Int, hostID: HostID, capabilities: Set<Capability>, bridgeVersion: String = "development", maximumFrameBytes: Int = BridgeProtocol.maximumFrameBytes, hostSigningPublicKey: Data = Data(), hostIdentitySignature: Data = Data(), herdrVersion: String = "unknown", bridgeBuildID: String = "", hostPlatform: String = "", deviceChallenge: Data = Data()) {
+        self.protocolMajor = protocolMajor; self.schemaRevision = schemaRevision; self.hostID = hostID; self.capabilities = capabilities; self.bridgeVersion = bridgeVersion; self.maximumFrameBytes = maximumFrameBytes; self.hostSigningPublicKey = hostSigningPublicKey; self.hostIdentitySignature = hostIdentitySignature; self.herdrVersion = herdrVersion; self.bridgeBuildID = bridgeBuildID; self.hostPlatform = hostPlatform; self.deviceChallenge = deviceChallenge
     }
 }
 
@@ -216,6 +224,8 @@ public enum EnvelopePayload: Codable, Equatable, Sendable {
     case notificationRouteCommand(NotificationRouteCommand)
     case notificationRouteResult(NotificationRouteResult)
     case terminalScroll(TerminalScrollRequest)
+    case deviceSessionProof(DeviceSessionProof)
+    case deviceSessionAccepted(DeviceSessionAccepted)
 }
 
 public struct Envelope: Codable, Equatable, Sendable {

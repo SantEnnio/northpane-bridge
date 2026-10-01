@@ -40,6 +40,8 @@ enum BridgeWireMapper {
         case let .notificationRouteCommand(message): result.payload = .notificationRouteCommand(try encode(message))
         case let .terminalScroll(message): result.payload = .terminalScroll(try encode(message))
         case let .notificationRouteResult(message): result.payload = .notificationRouteResult(try encode(message))
+        case let .deviceSessionProof(message): result.payload = .deviceSessionProof(encode(message))
+        case let .deviceSessionAccepted(message): result.payload = .deviceSessionAccepted(encode(message))
         }
         return result
     }
@@ -84,6 +86,8 @@ enum BridgeWireMapper {
         case let .terminalScroll(wire): decoded = .terminalScroll(try decode(wire))
         case let .notificationRouteCommand(wire): decoded = .notificationRouteCommand(try decode(wire))
         case let .notificationRouteResult(wire): decoded = .notificationRouteResult(try decode(wire))
+        case let .deviceSessionProof(wire): decoded = .deviceSessionProof(try decode(wire))
+        case let .deviceSessionAccepted(wire): decoded = .deviceSessionAccepted(try decode(wire))
         }
         return Envelope(protocolMajor: protocolMajor, schemaRevision: schemaRevision, connectionID: .init(rawValue: connection), channelID: .init(rawValue: channel), messageID: .init(rawValue: message), payload: decoded, preservedUnknownFields: value.unknownFields.data)
     }
@@ -120,12 +124,13 @@ enum BridgeWireMapper {
         result.herdrVersion = value.herdrVersion
         result.bridgeBuildID = value.bridgeBuildID
         result.hostPlatform = value.hostPlatform
+        result.deviceChallenge = value.deviceChallenge
         return result
     }
 
     private static func decode(_ value: Northpane_Bridge_V1_HandshakeAccepted) throws -> HandshakeAccepted {
         guard let host = UUID(uuidString: value.hostID) else { throw Problem.malformedFrame }
-        return HandshakeAccepted(protocolMajor: try integer(value.protocolMajor), schemaRevision: try integer(value.schemaRevision), hostID: .init(rawValue: host), capabilities: Set(try value.capabilities.map(decode)), bridgeVersion: value.bridgeVersion, maximumFrameBytes: try integer(value.maximumFrameBytes), hostSigningPublicKey: value.hostSigningPublicKey, hostIdentitySignature: value.hostIdentitySignature, herdrVersion: value.herdrVersion, bridgeBuildID: value.bridgeBuildID, hostPlatform: value.hostPlatform)
+        return HandshakeAccepted(protocolMajor: try integer(value.protocolMajor), schemaRevision: try integer(value.schemaRevision), hostID: .init(rawValue: host), capabilities: Set(try value.capabilities.map(decode)), bridgeVersion: value.bridgeVersion, maximumFrameBytes: try integer(value.maximumFrameBytes), hostSigningPublicKey: value.hostSigningPublicKey, hostIdentitySignature: value.hostIdentitySignature, herdrVersion: value.herdrVersion, bridgeBuildID: value.bridgeBuildID, hostPlatform: value.hostPlatform, deviceChallenge: value.deviceChallenge)
     }
 
     private static func encode(_ value: Problem) -> Northpane_Bridge_V1_Problem {
@@ -236,6 +241,10 @@ enum BridgeWireMapper {
     private static func decode(_ value: Northpane_Bridge_V1_PairingProof) throws -> WirePairingProof { guard let device = UUID(uuidString: value.clientDeviceID), let challenge = UUID(uuidString: value.challengeID) else { throw Problem.malformedFrame }; return WirePairingProof(clientDeviceID: ClientDeviceID(rawValue: device), challengeID: challenge, publicKey: value.publicKey, signature: value.signature) }
     private static func encode(_ value: WirePairingAccepted) -> Northpane_Bridge_V1_PairingAccepted { var result = Northpane_Bridge_V1_PairingAccepted(); result.clientDeviceID = value.clientDeviceID.rawValue.uuidString; result.observation = value.observation; result.standardControl = value.standardControl; return result }
     private static func decode(_ value: Northpane_Bridge_V1_PairingAccepted) throws -> WirePairingAccepted { guard let device = UUID(uuidString: value.clientDeviceID) else { throw Problem.malformedFrame }; return WirePairingAccepted(clientDeviceID: ClientDeviceID(rawValue: device), observation: value.observation, standardControl: value.standardControl) }
+    private static func encode(_ value: DeviceSessionProof) -> Northpane_Bridge_V1_DeviceSessionProof { var result = Northpane_Bridge_V1_DeviceSessionProof(); result.clientDeviceID = value.clientDeviceID.rawValue.uuidString; result.signature = value.signature; return result }
+    private static func decode(_ value: Northpane_Bridge_V1_DeviceSessionProof) throws -> DeviceSessionProof { guard let device = UUID(uuidString: value.clientDeviceID) else { throw Problem.malformedFrame }; return DeviceSessionProof(clientDeviceID: ClientDeviceID(rawValue: device), signature: value.signature) }
+    private static func encode(_ value: DeviceSessionAccepted) -> Northpane_Bridge_V1_DeviceSessionAccepted { var result = Northpane_Bridge_V1_DeviceSessionAccepted(); result.clientDeviceID = value.clientDeviceID.rawValue.uuidString; result.observation = value.observation; result.standardControl = value.standardControl; return result }
+    private static func decode(_ value: Northpane_Bridge_V1_DeviceSessionAccepted) throws -> DeviceSessionAccepted { guard let device = UUID(uuidString: value.clientDeviceID) else { throw Problem.malformedFrame }; return DeviceSessionAccepted(clientDeviceID: ClientDeviceID(rawValue: device), observation: value.observation, standardControl: value.standardControl) }
 
     private static func encode(_ value: ResourceCommand) throws -> Northpane_Bridge_V1_ResourceCommand {
         var result = Northpane_Bridge_V1_ResourceCommand()

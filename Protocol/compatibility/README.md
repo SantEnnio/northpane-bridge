@@ -106,3 +106,21 @@ writes the chunks to a hidden partial file as they arrive and moves the finished
 file to `sent-<time>-<digest>/<name>` in the same staging folder, pruned with the
 pasted files. `length` 0 with the same `idempotency_key` cancels an upload. A
 client that sees an older revision sends only images and PDFs, by their bytes.
+
+Revision 20 authenticates the Client device by a proof of its key, in every session, instead of
+by the identity it declares. `HandshakeAccepted.device_challenge` carries random bytes the Bridge
+made for that connection; the client answers with `DeviceSessionProof`, its P-256 signature over a
+statement that binds the domain `northpane-device-session-v1`, the Host ID, the client device ID,
+the connection ID, the negotiated protocol and revision, that challenge and the client's own
+`host_identity_challenge` (each field behind its length; see the message). The Bridge checks it
+against the key it paired and answers `DeviceSessionAccepted` with the grants, `device_not_paired`
+for a device it does not know (which then pairs as before) or `device_proof_invalid`; each
+challenge takes one attempt. Until then a revision-20 session is granted nothing. Pairing no longer
+gives a paired device ID another key (`pairing_identity_conflict`), and the same key pairing again
+keeps its grants. A session negotiated at revision 19 or older still authenticates by the declared
+identity, but only for a device that has never proved its key: the first proof, or a pairing made
+at revision 20, marks the device, and a declared identity no longer stands for it. Every Bridge
+process rereads the pairings when they change, before each protected request and at each
+heartbeat, and a session whose device is no longer paired loses its terminals and subscriptions
+and is answered `device_revoked`. A client that sees an older revision cannot prove its device,
+and must not treat such a session as proven.

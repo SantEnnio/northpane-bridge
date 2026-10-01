@@ -30,7 +30,10 @@ public actor BridgeSessionResponder {
             case let .success(base):
                 do {
                     let signature = try await authority.signHostIdentityChallenge(hello.hostIdentityChallenge)
-                    payload = .accepted(HandshakeAccepted(protocolMajor: base.protocolMajor, schemaRevision: base.schemaRevision, hostID: base.hostID, capabilities: base.capabilities, bridgeVersion: bridgeVersion, maximumFrameBytes: base.maximumFrameBytes, hostSigningPublicKey: authority.identity.signingPublicKey, hostIdentitySignature: signature, herdrVersion: herdrVersion, bridgeBuildID: bridgeBuildID, hostPlatform: HostPlatform.current.rawValue))
+                    // Made for this connection alone: the paired device proves its key by signing it.
+                    let deviceChallenge = base.schemaRevision >= BridgeProtocol.deviceSessionProofRevision
+                        ? Data((0..<32).map { _ in UInt8.random(in: .min ... .max) }) : Data()
+                    payload = .accepted(HandshakeAccepted(protocolMajor: base.protocolMajor, schemaRevision: base.schemaRevision, hostID: base.hostID, capabilities: base.capabilities, bridgeVersion: bridgeVersion, maximumFrameBytes: base.maximumFrameBytes, hostSigningPublicKey: authority.identity.signingPublicKey, hostIdentitySignature: signature, herdrVersion: herdrVersion, bridgeBuildID: bridgeBuildID, hostPlatform: HostPlatform.current.rawValue, deviceChallenge: deviceChallenge))
                 } catch {
                     payload = .problem(Problem(code: "identity_signing_failed", locus: .bridge, retry: .never, recoveryAction: "repairBridgeIdentity", phase: .trust))
                 }
