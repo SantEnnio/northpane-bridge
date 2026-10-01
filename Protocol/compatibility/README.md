@@ -122,5 +122,7 @@ identity, but only for a device that has never proved its key: the first proof, 
 at revision 20, marks the device, and a declared identity no longer stands for it. Every Bridge
 process rereads the pairings when they change, before each protected request and at each
 heartbeat, and a session whose device is no longer paired loses its terminals and subscriptions
-and is answered `device_revoked`. A client that sees an older revision cannot prove its device,
-and must not treat such a session as proven.
+and is answered `device_revoked`. The private endpoint no longer pairs a device
+(`pairing_requires_ssh`): anyone on the network can reach it, so a device pairs over SSH or the
+Host's own socket and then proves its key over the endpoint. A client that sees an older revision
+cannot prove its device, and must not treat such a session as proven.

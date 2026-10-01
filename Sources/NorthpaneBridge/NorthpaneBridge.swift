@@ -346,9 +346,20 @@ struct NorthpaneBridge {
                     responsePayload = .problem(Problem(code: "handshake_required", locus: .bridge, retry: .afterReconnect, recoveryAction: "restartHandshake", phase: .handshake))
                     break
                 }
+                // Pairing is open to whoever reaches the Bridge. Over SSH, or on this Host's own
+                // socket, that is the Host user; anyone on the network can reach the private
+                // endpoint. A device pairs over SSH first and uses the endpoint once paired.
+                guard transport.kind != .privateEndpoint else {
+                    responsePayload = .problem(Problem(code: "pairing_requires_ssh", locus: .bridge, retry: .afterUserAction, recoveryAction: "pairOverSSH", phase: .pairing))
+                    break
+                }
                 let challenge = await authority.issueChallenge()
                 responsePayload = .pairingChallenge(.init(challengeID: challenge.id, hostID: challenge.hostID, nonce: challenge.nonce, expiresAt: challenge.expiresAt))
             case let .pairingProof(proof):
+                guard transport.kind != .privateEndpoint else {
+                    responsePayload = .problem(Problem(code: "pairing_requires_ssh", locus: .bridge, retry: .afterUserAction, recoveryAction: "pairOverSSH", phase: .pairing))
+                    break
+                }
                 guard proof.clientDeviceID == presentedDevice else {
                     responsePayload = .problem(Problem(code: "pairing_device_mismatch", locus: .bridge, retry: .afterUserAction, recoveryAction: "restartPairing", phase: .pairing))
                     break

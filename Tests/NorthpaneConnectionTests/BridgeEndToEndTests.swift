@@ -614,15 +614,34 @@ private final class TestCertificateDelegate: NSObject, URLSessionDelegate, @unch
     #expect(process.isRunning)
 
     let session = URLSession(configuration: .ephemeral, delegate: TestCertificateDelegate(), delegateQueue: nil)
-    let transport = try WebSocketBridgeTransport(url: URL(string: "wss://127.0.0.1:\(port)/bridge")!, session: session)
+    defer { session.invalidateAndCancel() }
     let signer = try ClientDeviceSigner()
-    let client = NorthpaneBridgeClient(transport: transport, deviceID: signer.deviceID)
-    _ = try await client.handshake()
-    _ = try await client.pair(using: signer)
+
+    // Anyone on the network can reach the endpoint, so nobody pairs there.
+    let stranger = NorthpaneBridgeClient(transport: try WebSocketBridgeTransport(url: URL(string: "wss://127.0.0.1:\(port)/bridge")!, session: session), deviceID: signer.deviceID)
+    _ = try await stranger.handshake(signer: signer)
+    await #expect(throws: Problem.self) { _ = try await stranger.pair(using: signer) }
+    await stranger.close()
+
+    // Paired over SSH, here the same Host's state served over standard I/O...
+    let ssh = NorthpaneBridgeClient(transport: try ProcessBridgeTransport(kind: .ssh, executableURL: URL(fileURLWithPath: "/usr/bin/env"), arguments: [
+        "NORTHPANE_HERDR_EXECUTABLE=\(repository.appending(path: "Tests/Fixtures/fake-herdr.sh").path)",
+        "NORTHPANE_HERDR_EVENT_SOCKET_OPTIONAL=1",
+        "HERDR_SOCKET_PATH=\(directory.appending(path: "missing-herdr.sock").path)",
+        "NORTHPANE_STATE_DIRECTORY=\(directory.appending(path: "state").path)",
+        repository.appending(path: ".build/debug/northpane-bridge").path, "serve", "--stdio",
+    ]), deviceID: signer.deviceID)
+    _ = try await ssh.handshake(signer: signer)
+    _ = try await ssh.pair(using: signer)
+    await ssh.close()
+
+    // ...the device proves its key over the endpoint and is served there.
+    let client = NorthpaneBridgeClient(transport: try WebSocketBridgeTransport(url: URL(string: "wss://127.0.0.1:\(port)/bridge")!, session: session), deviceID: signer.deviceID)
+    _ = try await client.handshake(signer: signer)
+    #expect(await client.deviceProven)
     let snapshot = try await client.observe()
     #expect(snapshot.panes.map(\.id) == ["pane-1"])
     await client.close()
-    session.invalidateAndCancel()
 }
 
 @Test func bridgeHandshakeRemainsAvailableWhenHerdrIsMissing() async throws {
