@@ -284,6 +284,37 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
     #expect(result?.output.contains("hello") != true)
 }
 
+/// A Mac on a tailnet and on its local network listens on both, on one port, so a device saved
+/// with both addresses reaches it through either.
+@Test func theRelayListensOnEveryAddressItIsGivenOnOnePort() async throws {
+    let fixture = try await RelayFixture()
+    let directory = TestDirectory(enrolled: [fixture.deviceKey], permitted: [("127.0.0.1", fixture.hostPort)])
+    let relay = try SSHRelayServer(hostKey: P256.Signing.PrivateKey(), directory: directory)
+    let port = try await relay.start(addresses: ["127.0.0.1", "::1"], port: 0)
+    defer { Task { await relay.stop(); await fixture.tearDown() } }
+    for address in ["127.0.0.1", "::1"] {
+        let route = SSHRelayRoute(host: address, port: port, hostKeyFingerprint: relay.hostKeyFingerprint)
+        #expect(try await SSHRelayEnrollment.hosts(route, credential: fixture.credential) == directory.hostsDocument(), "\(address)")
+    }
+    // One public address among them and the relay listens nowhere.
+    let refused = try SSHRelayServer(hostKey: P256.Signing.PrivateKey(), directory: directory)
+    await #expect(throws: SystemTransportError.invalidEndpoint) { _ = try await refused.start(addresses: ["127.0.0.1", "8.8.8.8"], port: 0) }
+}
+
+/// A Mac that stopped relaying, or an address it no longer has, reads as a relay that does not
+/// answer: what lets a device move on to the relay's next address.
+@Test func aRelayThatDoesNotAnswerIsUnreachable() async throws {
+    let fixture = try await RelayFixture()
+    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], permitted: [("127.0.0.1", fixture.hostPort)]))
+    await relay.stop()
+    defer { Task { await fixture.tearDown() } }
+    await expectRelayError(.relayUnreachable) { _ = try await fixture.connect(through: relay, port: port) }
+    await expectRelayError(.relayUnreachable) {
+        _ = try await SSHRelayEnrollment.hosts(SSHRelayRoute(host: "127.0.0.1", port: port, hostKeyFingerprint: relay.hostKeyFingerprint),
+                                               credential: fixture.credential)
+    }
+}
+
 @Test func theRelayListensOnlyWhereThePublicCannotReach() {
     for address in ["127.0.0.1", "10.1.2.3", "172.20.0.5", "192.168.1.20", "100.101.102.103", "fd7a:115c:a1e0::1"] {
         #expect(SSHRelayServer.isPrivate(address), "\(address)")

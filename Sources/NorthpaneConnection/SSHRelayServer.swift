@@ -29,7 +29,7 @@ public final class SSHRelayServer: @unchecked Sendable {
     private let hostKey: NIOSSHPrivateKey
     private let directory: any SSHRelayDirectory
     private let lock = NSLock()
-    private var listener: Channel?
+    private var listeners: [Channel] = []
     /// Every open connection, by the key that logged in on it, to close them when a device goes.
     private var connections: [ObjectIdentifier: (channel: Channel, authentication: RelayServerAuthentication)] = [:]
 
@@ -60,9 +60,30 @@ public final class SSHRelayServer: @unchecked Sendable {
 
     /// Listens on `address` and answers the port it bound (`port` 0 lets the system choose).
     public func start(address: String, port: Int = 0) async throws -> Int {
-        guard Self.isPrivate(address) else { throw SystemTransportError.invalidEndpoint }
+        try await start(addresses: [address], port: port)
+    }
+
+    /// Listens on each of `addresses` — the tailnet and the local network, say — on one port, and
+    /// answers that port (`port` 0 lets the system choose it for the first address).
+    public func start(addresses: [String], port: Int) async throws -> Int {
+        guard !addresses.isEmpty, addresses.allSatisfy(Self.isPrivate) else { throw SystemTransportError.invalidEndpoint }
+        var bound = port
+        do {
+            for address in addresses {
+                let channel = try await listen(on: address, port: bound)
+                lock.withLock { listeners.append(channel) }
+                if bound == 0 { bound = channel.localAddress?.port ?? 0 }
+            }
+        } catch {
+            await stop()
+            throw error
+        }
+        return bound
+    }
+
+    private func listen(on address: String, port: Int) async throws -> Channel {
         let hostKey = self.hostKey, directory = self.directory
-        let channel = try await ServerBootstrap(group: SSHEventLoopGroup.shared)
+        return try await ServerBootstrap(group: SSHEventLoopGroup.shared)
             .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { [weak self] channel in
                 let authentication = RelayServerAuthentication(directory: directory)
@@ -81,16 +102,14 @@ public final class SSHRelayServer: @unchecked Sendable {
             }
             .bind(host: address, port: port)
             .get()
-        lock.withLock { listener = channel }
-        return channel.localAddress?.port ?? port
     }
 
     public func stop() async {
-        let (listener, open) = lock.withLock { () -> (Channel?, [Channel]) in
-            defer { self.listener = nil; connections.removeAll() }
-            return (self.listener, connections.values.map(\.channel))
+        let (listeners, open) = lock.withLock { () -> ([Channel], [Channel]) in
+            defer { self.listeners.removeAll(); connections.removeAll() }
+            return (self.listeners, connections.values.map(\.channel))
         }
-        try? await listener?.close().get()
+        for listener in listeners { try? await listener.close().get() }
         for channel in open { try? await channel.close().get() }
     }
 
