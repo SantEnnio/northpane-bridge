@@ -13,17 +13,54 @@ import Testing
 // A device reaching a Host through the relay, end to end on this Mac: the relay, an SSH server
 // standing in for the Host that runs the real Bridge (with the fake Herdr of Tests/Fixtures) for
 // the session it is asked for, and the device's own SSH session to it inside the relay's channel.
+// And a device reaching the Mac that runs the relay: a session of the relay's own, joined to a
+// real Bridge that the directory starts as the app would.
+
+/// How these tests start the real Bridge, with the fake Herdr and a state of its own.
+private func bridgeLaunch(state: URL) -> [String] {
+    let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    return [
+        "NORTHPANE_HERDR_EXECUTABLE=\(repository.appending(path: "Tests/Fixtures/fake-herdr.sh").path)",
+        "NORTHPANE_HERDR_EVENT_SOCKET_OPTIONAL=1",
+        "HERDR_SOCKET_PATH=\(state.appending(path: "missing-herdr.sock").path)",
+        "NORTHPANE_STATE_DIRECTORY=\(state.path)",
+        repository.appending(path: ".build/debug/northpane-bridge").path, "serve", "--stdio",
+    ]
+}
 
 private final class TestDirectory: SSHRelayDirectory, @unchecked Sendable {
     private let lock = NSLock()
     private var enrolled: Set<String>
     private var token: String?
     private let permitted: Set<String>
+    /// How the Bridge of the Mac itself is started, when this relay offers one.
+    private let bridge: [String]?
+    private var opened: [String] = []
+    private var ended = 0
+    private var names: [String: String] = [:]
 
-    init(enrolled: Set<String> = [], token: String? = nil, permitted: [(String, Int)]) {
+    init(enrolled: Set<String> = [], token: String? = nil, permitted: [(String, Int)] = [], bridge: [String]? = nil) {
         self.enrolled = enrolled; self.token = token
         self.permitted = Set(permitted.map { "\($0.0):\($0.1)" })
+        self.bridge = bridge
     }
+
+    /// The keys this Mac's Bridge was started for, in order, and how many of those sessions are over.
+    var bridgesOpened: [String] { lock.withLock { opened } }
+    var bridgesEnded: Int { lock.withLock { ended } }
+
+    func bridge(for publicKey: String) -> SSHRelayBridge? {
+        guard let bridge else { return nil }
+        lock.withLock { opened.append(publicKey) }
+        return try? SSHRelayBridge.process(executableURL: URL(fileURLWithPath: "/usr/bin/env"), arguments: bridge) { [self] in
+            lock.withLock { ended += 1 }
+        }
+    }
+
+    /// What the device with this key last called itself.
+    func name(of publicKey: String) -> String? { lock.withLock { names[publicKey] } }
+
+    func device(_ publicKey: String, calledItself name: String) { lock.withLock { names[publicKey] = name } }
 
     func isEnrolled(_ publicKey: String) -> Bool { lock.withLock { enrolled.contains(publicKey) } }
 
@@ -110,14 +147,7 @@ private final class TestHostAuthentication: NIOSSHServerUserAuthenticationDelega
 
 /// An SSH server on loopback standing in for a Host: it lets in `device` and runs the Bridge.
 private func startTestHost(device: String, state: URL) async throws -> (Channel, Int) {
-    let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    let arguments = [
-        "NORTHPANE_HERDR_EXECUTABLE=\(repository.appending(path: "Tests/Fixtures/fake-herdr.sh").path)",
-        "NORTHPANE_HERDR_EVENT_SOCKET_OPTIONAL=1",
-        "HERDR_SOCKET_PATH=\(state.appending(path: "missing-herdr.sock").path)",
-        "NORTHPANE_STATE_DIRECTORY=\(state.path)",
-        repository.appending(path: ".build/debug/northpane-bridge").path, "serve", "--stdio",
-    ]
+    let arguments = bridgeLaunch(state: state)
     let hostKey = NIOSSHPrivateKey(p256Key: P256.Signing.PrivateKey())
     let channel = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
         .childChannelInitializer { channel in
@@ -138,6 +168,8 @@ private func startTestHost(device: String, state: URL) async throws -> (Channel,
 
 private struct RelayFixture {
     let state = FileManager.default.temporaryDirectory.appending(path: "northpane-relay-\(UUID().uuidString)")
+    /// The state of the Bridge of the Mac that runs the relay: a Host of its own, apart from the one behind it.
+    let macState = FileManager.default.temporaryDirectory.appending(path: "northpane-relay-mac-\(UUID().uuidString)")
     let credential: NativeSSHCredential
     let deviceKey: String
     let host: Channel
@@ -162,10 +194,40 @@ private struct RelayFixture {
             relay: SSHRelayRoute(host: "127.0.0.1", port: relayPort, hostKeyFingerprint: fingerprint ?? relay.hostKeyFingerprint, enrollmentToken: token))
     }
 
+    /// A session with the Bridge of the Mac that runs the relay, as `signer`'s device.
+    func connectToMac(_ relay: SSHRelayServer, port: Int, as signer: ClientDeviceSigner, token: String? = nil) async throws -> NorthpaneBridgeClient {
+        let route = SSHRelayRoute(host: "127.0.0.1", port: port, hostKeyFingerprint: relay.hostKeyFingerprint, enrollmentToken: token)
+        return NorthpaneBridgeClient(transport: try await NativeSSHBridgeTransport.connect(toBridgeOf: route, credential: credential), deviceID: signer.deviceID)
+    }
+
     func tearDown() async {
         try? await host.close().get()
         try? FileManager.default.removeItem(at: state)
+        try? FileManager.default.removeItem(at: macState)
     }
+}
+
+/// Whether the relay closed this session by itself. One it left open is given up after a few
+/// seconds, so that a relay that started something fails the test instead of holding it.
+private func closedByTheRelay(_ transport: NativeSSHBridgeTransport) async -> Bool {
+    let patience = Duration.seconds(5)
+    let giveUp = Task { try await Task.sleep(for: patience); await transport.close() }
+    defer { giveUp.cancel() }
+    let asked = ContinuousClock.now
+    do {
+        _ = try await transport.receive()
+        return false
+    } catch {
+        return ContinuousClock.now - asked < patience
+    }
+}
+
+/// Waits a few seconds at most for what the relay does on its own thread, a moment after a
+/// session closes.
+private func eventually(_ happened: () -> Bool) async -> Bool {
+    let deadline = Date().addingTimeInterval(5)
+    while Date() < deadline, !happened() { try? await Task.sleep(for: .milliseconds(20)) }
+    return happened()
 }
 
 private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws -> Void) async {
@@ -271,9 +333,9 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
     }
 }
 
-/// A session on the relay reads its Hosts and does nothing else: no command of the device's
-/// choosing runs on the Mac.
-@Test func theRelayRunsNoCommandButItsOwnList() async throws {
+/// A session on the relay takes the relay's own two commands and nothing else: no command of the
+/// device's choosing runs on the Mac.
+@Test func theRelayRunsNoCommandOfTheDevicesChoosing() async throws {
     let fixture = try await RelayFixture()
     let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], permitted: [("127.0.0.1", fixture.hostPort)]))
     defer { Task { await relay.stop(); await fixture.tearDown() } }
@@ -282,6 +344,172 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
                                                     credential: fixture.credential, expectedHostKeyFingerprint: relay.hostKeyFingerprint)
     let result = try? await deployment.runInstallerShellScript("echo hello", arguments: [])
     #expect(result?.output.contains("hello") != true)
+}
+
+/// The Mac that runs the relay is a Host too, with no SSH server to log in to: an enrolled device
+/// reaches its Bridge on a session of the relay's own, and pairs and proves itself there as on any Host.
+@Test func anEnrolledDeviceReachesTheBridgeOfTheMacItself() async throws {
+    let fixture = try await RelayFixture()
+    let directory = TestDirectory(enrolled: [fixture.deviceKey], bridge: bridgeLaunch(state: fixture.macState))
+    let (relay, port) = try await fixture.relay(directory)
+    defer { Task { await relay.stop(); await fixture.tearDown() } }
+
+    let signer = try ClientDeviceSigner()
+    let client = try await fixture.connectToMac(relay, port: port, as: signer)
+    _ = try await client.handshake(signer: signer)
+    _ = try await client.pair(using: signer)
+    #expect(await client.deviceProven)
+    #expect(try await client.observe().panes.map(\.id) == ["pane-1"])
+    await client.close()
+
+    // A later session is the same device's: it proves its key again, and has no need to pair.
+    let again = try await fixture.connectToMac(relay, port: port, as: signer)
+    _ = try await again.handshake(signer: signer)
+    #expect(await again.deviceProven)
+    #expect(try await again.observe().panes.map(\.id) == ["pane-1"])
+    await again.close()
+    #expect(directory.bridgesOpened == [fixture.deviceKey, fixture.deviceKey])
+    // Both Bridges are gone before their state is removed, or one could write it back.
+    #expect(await eventually { directory.bridgesEnded == 2 })
+}
+
+/// The Mac's Bridge is for enrolled devices: a key the relay does not know is turned away at the
+/// door, and no Bridge is started for it.
+@Test func aDeviceTheRelayDoesNotKnowReachesNoBridgeOfTheMac() async throws {
+    let fixture = try await RelayFixture()
+    let directory = TestDirectory(token: "the-real-one", bridge: bridgeLaunch(state: fixture.macState))
+    let (relay, port) = try await fixture.relay(directory)
+    defer { Task { await relay.stop(); await fixture.tearDown() } }
+
+    let signer = try ClientDeviceSigner()
+    await expectRelayError(.deviceNotEnrolled) { _ = try await fixture.connectToMac(relay, port: port, as: signer) }
+    await expectRelayError(.deviceNotEnrolled) { _ = try await fixture.connectToMac(relay, port: port, as: signer, token: "a-guess") }
+    #expect(directory.bridgesOpened.isEmpty)
+}
+
+/// A relay offers the Mac it runs on only when the app says so. Without that an enrolled device
+/// is told the relay will not open it, as for a Host the Operator did not enable.
+@Test func aRelayWhoseAppOffersNoBridgeRefusesTheSession() async throws {
+    let fixture = try await RelayFixture()
+    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], permitted: [("127.0.0.1", fixture.hostPort)]))
+    defer { Task { await relay.stop(); await fixture.tearDown() } }
+    await expectRelayError(.targetRefused) { _ = try await fixture.connectToMac(relay, port: port, as: try ClientDeviceSigner()) }
+}
+
+/// The Bridge is started for the relay's own command, spelled exactly: a command line that only
+/// contains it, as a Host's shell would be sent, starts nothing and closes the session.
+@Test func theRelayStartsTheBridgeForItsOwnCommandAndNoOther() async throws {
+    let fixture = try await RelayFixture()
+    let directory = TestDirectory(enrolled: [fixture.deviceKey], bridge: bridgeLaunch(state: fixture.macState))
+    let (relay, port) = try await fixture.relay(directory)
+    defer { Task { await relay.stop(); await fixture.tearDown() } }
+
+    for command in ["northpane-bridge serve --stdio", "northpane-bridge;id", " northpane-bridge", "sh -c northpane-bridge", "NORTHPANE-BRIDGE"] {
+        // The relay as if it were a Host, asked for a Bridge the way a Host's shell is.
+        let transport = try await NativeSSHBridgeTransport.connect(
+            host: "127.0.0.1", port: port, username: SSHRelayRoute.username, credential: fixture.credential,
+            expectedHostKeyFingerprint: relay.hostKeyFingerprint, bridgeCommand: command)
+        #expect(await closedByTheRelay(transport), "\(command)")
+        await transport.close()
+    }
+    #expect(directory.bridgesOpened.isEmpty)
+}
+
+/// The Bridge the app started lives as long as the session it was started for: when the device
+/// closes the session the app is told, once, with the key it was started for.
+@Test func theAppIsToldWhenADevicesSessionWithItsBridgeIsOver() async throws {
+    let fixture = try await RelayFixture()
+    let directory = TestDirectory(enrolled: [fixture.deviceKey], bridge: bridgeLaunch(state: fixture.macState))
+    let (relay, port) = try await fixture.relay(directory)
+    defer { Task { await relay.stop(); await fixture.tearDown() } }
+
+    let signer = try ClientDeviceSigner()
+    let client = try await fixture.connectToMac(relay, port: port, as: signer)
+    _ = try await client.handshake(signer: signer)
+    #expect(directory.bridgesOpened == [fixture.deviceKey])
+    #expect(directory.bridgesEnded == 0)
+    await client.close()
+    #expect(await eventually { directory.bridgesEnded == 1 })
+}
+
+/// Removing a device from the relay ends what it is doing on the Mac itself too, not only on the
+/// Hosts behind it.
+@Test func removingADeviceFromTheRelayEndsItsSessionWithTheMac() async throws {
+    let fixture = try await RelayFixture()
+    let directory = TestDirectory(enrolled: [fixture.deviceKey], bridge: bridgeLaunch(state: fixture.macState))
+    let (relay, port) = try await fixture.relay(directory)
+    defer { Task { await relay.stop(); await fixture.tearDown() } }
+
+    let signer = try ClientDeviceSigner()
+    let client = try await fixture.connectToMac(relay, port: port, as: signer)
+    defer { Task { await client.close() } }
+    _ = try await client.handshake(signer: signer)
+    await relay.disconnect(device: fixture.deviceKey)
+    await #expect(throws: (any Error).self) { _ = try await client.pair(using: signer) }
+    #expect(await eventually { directory.bridgesEnded == 1 })
+}
+
+/// The app's Bridge is a process of its own, and it does not outlive its session: when the
+/// session is over it is told to stop, even one that would never stop by itself.
+@Test func theBridgeProcessIsToldToStopWhenItsSessionIsOver() async throws {
+    let fixture = try await RelayFixture()
+    try FileManager.default.createDirectory(at: fixture.macState, withIntermediateDirectories: true)
+    let ready = fixture.macState.appending(path: "ready"), stopped = fixture.macState.appending(path: "stopped")
+    // Stands in for a Bridge that reads nothing and never ends: only being told to stop ends it.
+    let standIn = ["/bin/sh", "-c", #"trap ': > "$1"; exit 0' TERM; : > "$0"; while :; do sleep 0.05; done"#, ready.path, stopped.path]
+    let directory = TestDirectory(enrolled: [fixture.deviceKey], bridge: standIn)
+    let (relay, port) = try await fixture.relay(directory)
+    defer { Task { await relay.stop(); await fixture.tearDown() } }
+
+    let route = SSHRelayRoute(host: "127.0.0.1", port: port, hostKeyFingerprint: relay.hostKeyFingerprint)
+    let transport = try await NativeSSHBridgeTransport.connect(toBridgeOf: route, credential: fixture.credential)
+    #expect(await eventually { FileManager.default.fileExists(atPath: ready.path) })
+    #expect(!FileManager.default.fileExists(atPath: stopped.path))
+    await transport.close()
+    #expect(await eventually { FileManager.default.fileExists(atPath: stopped.path) })
+    #expect(directory.bridgesEnded == 1)
+}
+
+/// A Bridge that ends by itself — it could not start, or it failed — ends the device's session
+/// with it: the device is not left waiting on a Bridge that is gone.
+@Test func theSessionEndsWhenTheBridgeOfTheMacDoes() async throws {
+    let fixture = try await RelayFixture()
+    let directory = TestDirectory(enrolled: [fixture.deviceKey], bridge: ["/bin/sh", "-c", "exit 1"])
+    let (relay, port) = try await fixture.relay(directory)
+    defer { Task { await relay.stop(); await fixture.tearDown() } }
+
+    let route = SSHRelayRoute(host: "127.0.0.1", port: port, hostKeyFingerprint: relay.hostKeyFingerprint)
+    let transport = try await NativeSSHBridgeTransport.connect(toBridgeOf: route, credential: fixture.credential)
+    #expect(await closedByTheRelay(transport))
+    await transport.close()
+    #expect(await eventually { directory.bridgesEnded == 1 })
+}
+
+/// A device says what it is called as it opens a session, for the Mac to show beside its key:
+/// when it enrolls, and again whenever it reaches the Mac's Bridge. Nothing checks the name, so
+/// what the app is told is one short line of characters that show, and a name with none is not told.
+@Test func aDeviceTellsTheRelayWhatItIsCalled() async throws {
+    let fixture = try await RelayFixture()
+    // Nothing is said to the Bridge here: anything that reads its input stands in for it.
+    let directory = TestDirectory(token: "from-the-qr-code", bridge: ["/bin/cat"])
+    let (relay, port) = try await fixture.relay(directory)
+    defer { Task { await relay.stop(); await fixture.tearDown() } }
+
+    let enrolling = SSHRelayRoute(host: "127.0.0.1", port: port, hostKeyFingerprint: relay.hostKeyFingerprint, enrollmentToken: "from-the-qr-code")
+    _ = try await SSHRelayEnrollment.hosts(enrolling, credential: fixture.credential, deviceName: "iPhone 16 Pro")
+    #expect(directory.name(of: fixture.deviceKey) == "iPhone 16 Pro")
+
+    // A line break, a direction override and two hundred letters too many, on the way to the Bridge.
+    let route = SSHRelayRoute(host: "127.0.0.1", port: port, hostKeyFingerprint: relay.hostKeyFingerprint)
+    let renamed = try await NativeSSHBridgeTransport.connect(toBridgeOf: route, credential: fixture.credential,
+                                                             deviceName: "  Studio\u{202E} iPad\nmini " + String(repeating: "x", count: 200))
+    await renamed.close()
+    #expect(directory.name(of: fixture.deviceKey) == "Studio iPad mini xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+    #expect(directory.name(of: fixture.deviceKey)?.count == 64)
+
+    let unnamed = try await NativeSSHBridgeTransport.connect(toBridgeOf: route, credential: fixture.credential, deviceName: " \u{202E}\n")
+    await unnamed.close()
+    #expect(directory.name(of: fixture.deviceKey)?.hasPrefix("Studio iPad mini ") == true)
 }
 
 /// A Mac on a tailnet and on its local network listens on both, on one port, so a device saved

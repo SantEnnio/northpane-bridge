@@ -85,7 +85,10 @@ What it runs, and nothing else:
 - The relay a Mac of the Operator's can run for their other devices (`SSHRelayServer`): an SSH
   server that takes enrolled device keys only and opens `direct-tcpip` channels only to the
   Hosts the Operator enabled. A device runs its own SSH session with the Host inside that
-  channel, so the relay never sees what the session carries.
+  channel, so the relay never sees what the session carries. The Mac that runs the relay has no
+  SSH server of its own: when the app offers it, the relay joins a session to that Mac's own
+  Bridge, which asks of the device what a Bridge asks over SSH, to pair and to prove its key in
+  every session. The relay runs no shell and no command of the device's.
 
 ## Build and test
 

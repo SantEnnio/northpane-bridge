@@ -106,6 +106,45 @@ public actor NativeSSHBridgeTransport: BridgeTransport {
         }
     }
 
+    /// A session with the Bridge of the Mac that runs a relay, for a device enrolled in it. That Mac
+    /// has no SSH server to log in to: the relay itself joins a session of its own to the Mac's
+    /// Bridge, so there is no Host's SSH inside this connection and `serverHostKeyFingerprint` is
+    /// the relay's pinned key. What the Bridge asks of a device is what it asks over SSH: to pair,
+    /// and to prove its key in every session. With `deviceName`, the relay is told what the device
+    /// is called, for the Mac to show while it is being controlled.
+    public static func connect(toBridgeOf relay: SSHRelayRoute, credential: NativeSSHCredential,
+                               deviceName: String? = nil) async throws -> NativeSSHBridgeTransport {
+        let key = try P256.Signing.PrivateKey(rawRepresentation: credential.rawPrivateKey)
+        let login = try await SSHRelayLogin.open(relay, deviceKey: key)
+        let parent = login.channel
+        let inbound = SSHInboundBuffer()
+        // The relay says whether it started the Bridge before a frame is sent to it: one sent
+        // earlier would have nothing to carry it.
+        let answered = parent.eventLoop.makePromise(of: Void.self)
+        do {
+            let child = try await parent.pipeline.handler(type: NIOSSHHandler.self).flatMap { ssh in
+                let promise = parent.eventLoop.makePromise(of: Channel.self)
+                ssh.createChannel(promise) { child, type in
+                    guard type == .session else { return child.eventLoop.makeFailedFuture(SystemTransportError.launchFailed) }
+                    return child.eventLoop.makeCompletedFuture {
+                        if let deviceName { try child.pipeline.syncOperations.addHandler(RelayDeviceName(deviceName)) }
+                        try child.pipeline.syncOperations.addHandler(SSHBridgeExecHandler(command: SSHRelayRoute.bridgeCommand, inbound: inbound, answered: answered))
+                    }
+                }
+                return promise.futureResult
+            }.get()
+            try await answered.futureResult.get()
+            guard let fingerprint = login.relayFingerprint else { throw SystemTransportError.ioFailure }
+            return NativeSSHBridgeTransport(parent: parent, child: child, relay: nil, fingerprint: fingerprint, inbound: inbound)
+        } catch {
+            // The session may never have opened, and then nothing else answers the promise.
+            answered.fail(error)
+            inbound.finish(error: error)
+            try? await parent.close().get()
+            throw login.channelFailure
+        }
+    }
+
     private init(parent: Channel, child: Channel, relay: Channel?, fingerprint: String, inbound: SSHInboundBuffer) {
         self.parentChannel = parent
         self.childChannel = child
@@ -572,10 +611,14 @@ private final class SSHBridgeExecHandler: ChannelDuplexHandler, @unchecked Senda
 
     private let command: String
     private let inbound: SSHInboundBuffer
+    /// Completed with the server's answer to the command, for a caller that waits for one before
+    /// it writes: a Host's shell gives none worth waiting for, a relay says whether the Bridge is there.
+    private let answered: EventLoopPromise<Void>?
 
-    init(command: String, inbound: SSHInboundBuffer) {
+    init(command: String, inbound: SSHInboundBuffer, answered: EventLoopPromise<Void>? = nil) {
         self.command = command
         self.inbound = inbound
+        self.answered = answered
     }
 
     func handlerAdded(context: ChannelHandlerContext) {
@@ -586,8 +629,9 @@ private final class SSHBridgeExecHandler: ChannelDuplexHandler, @unchecked Senda
 
     func channelActive(context: ChannelHandlerContext) {
         let channel = context.channel
-        context.triggerUserOutboundEvent(SSHChannelRequestEvent.ExecRequest(command: command, wantReply: false)).whenFailure { [inbound] error in
+        context.triggerUserOutboundEvent(SSHChannelRequestEvent.ExecRequest(command: command, wantReply: answered != nil)).whenFailure { [inbound, answered] error in
             inbound.finish(error: error)
+            answered?.fail(error)
             channel.close(promise: nil)
         }
         context.fireChannelActive()
@@ -613,6 +657,8 @@ private final class SSHBridgeExecHandler: ChannelDuplexHandler, @unchecked Senda
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if event is ChannelSuccessEvent { answered?.succeed(()) }
+        if event is ChannelFailureEvent { answered?.fail(SSHRelayError.targetRefused) }
         if let status = event as? SSHChannelRequestEvent.ExitStatus, status.exitStatus != 0 {
             // The same reading the system `ssh` transport gives these statuses: a shell that found
             // no Bridge to run is a Host to install one on, not a connection that failed. Without
@@ -628,11 +674,14 @@ private final class SSHBridgeExecHandler: ChannelDuplexHandler, @unchecked Senda
 
     func channelInactive(context: ChannelHandlerContext) {
         inbound.finish()
+        // Closed with the command unanswered: a relay that takes no such command closes the session.
+        answered?.fail(SSHRelayError.targetRefused)
         context.fireChannelInactive()
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         inbound.finish(error: error)
+        answered?.fail(error)
         context.close(promise: nil)
     }
 }
