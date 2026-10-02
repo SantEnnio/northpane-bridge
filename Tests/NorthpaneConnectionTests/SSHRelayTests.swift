@@ -543,6 +543,31 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
     }
 }
 
+/// An address that swallows the connection instead of refusing it reads as one that does not
+/// answer, too: a Mac's tailnet address, tried from a device that is off the tailnet. Left as the
+/// timeout NIO raises, it stopped a device from going on to the relay's next address.
+@Test func anAddressThatNeverAnswersIsUnreachableToo() async {
+    await #expect(throws: SystemTransportError.sshUnreachable(.timedOut)) {
+        try await NativeSSHReachability.named { throw ChannelError.connectTimeout(.seconds(10)) }
+    }
+}
+
+/// Something that takes the connection and is not the relay — it hangs up before it shows any
+/// key — is no relay at that address either, whatever the device was about to ask of it.
+@Test func somethingThatAnswersWithoutBeingTheRelayIsUnreachable() async throws {
+    let fixture = try await RelayFixture()
+    defer { Task { await fixture.tearDown() } }
+    let stranger = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+        .childChannelInitializer { channel in channel.close() }
+        .bind(host: "127.0.0.1", port: 0)
+        .get()
+    defer { stranger.close(promise: nil) }
+    let route = SSHRelayRoute(host: "127.0.0.1", port: stranger.localAddress?.port ?? 0, hostKeyFingerprint: "SHA256:theRelaysKey")
+
+    await expectRelayError(.relayUnreachable) { _ = try await SSHRelayEnrollment.hosts(route, credential: fixture.credential) }
+    await expectRelayError(.relayUnreachable) { _ = try await NativeSSHBridgeTransport.connect(toBridgeOf: route, credential: fixture.credential) }
+}
+
 @Test func theRelayListensOnlyWhereThePublicCannotReach() {
     for address in ["127.0.0.1", "10.1.2.3", "172.20.0.5", "192.168.1.20", "100.101.102.103", "fd7a:115c:a1e0::1"] {
         #expect(SSHRelayServer.isPrivate(address), "\(address)")

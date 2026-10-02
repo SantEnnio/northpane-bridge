@@ -15,6 +15,9 @@ import NorthpaneProtocol
 /// works on a Mac because `ssh` expands it and means nothing to a phone.
 enum NativeSSHReachability {
     static func failure(for error: Error) -> SSHReachabilityFailure? {
+        // An address that never answers at all ends the attempt with NIO's own timeout, not with
+        // the errors of the addresses tried: a tailnet address from a device off that tailnet.
+        if case ChannelError.connectTimeout = error { return .timedOut }
         guard let connection = error as? NIOConnectionError else { return nil }
         // No address was ever reached for: the name gave nothing to connect to.
         guard !connection.connectionErrors.isEmpty else { return .nameNotResolved }

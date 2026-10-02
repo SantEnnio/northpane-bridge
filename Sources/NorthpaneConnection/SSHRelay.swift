@@ -205,7 +205,8 @@ public enum SSHRelayEnrollment {
             return document
         } catch {
             try? await relay.close().get()
-            throw login.refusal ?? error
+            // What took the connection and showed no key is not the relay: the next address may be.
+            throw login.refusal ?? (login.relayFingerprint == nil ? SSHRelayError.relayUnreachable : error)
         }
     }
 }
@@ -241,7 +242,10 @@ struct SSHRelayLogin: Sendable {
         let relayKeys = PinnedHostKeyDelegate(expectedFingerprint: route.hostKeyFingerprint)
         do {
             let channel = try await NativeSSHReachability.named {
+                // A relay is on the tailnet or on the local network, where an address answers at
+                // once or not at all: a short wait, so that the next address is tried soon.
                 try await ClientBootstrap(group: SSHEventLoopGroup.shared)
+                    .connectTimeout(.seconds(5))
                     .channelInitializer { channel in
                         channel.eventLoop.makeCompletedFuture {
                             try channel.pipeline.syncOperations.addHandlers(
