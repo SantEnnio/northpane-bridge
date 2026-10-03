@@ -32,18 +32,22 @@ private final class TestDirectory: SSHRelayDirectory, @unchecked Sendable {
     private let lock = NSLock()
     private var enrolled: Set<String>
     private var token: String?
-    private let permitted: Set<String>
+    /// Where the Mac reaches each Host the Operator enabled, by the Host's ID; a test moves a Host.
+    private var reachable: [HostID: (host: String, port: Int)]
     /// How the Bridge of the Mac itself is started, when this relay offers one.
     private let bridge: [String]?
     private var opened: [String] = []
     private var ended = 0
     private var names: [String: String] = [:]
 
-    init(enrolled: Set<String> = [], token: String? = nil, permitted: [(String, Int)] = [], bridge: [String]? = nil) {
+    init(enrolled: Set<String> = [], token: String? = nil, reachable: [HostID: (String, Int)] = [:], bridge: [String]? = nil) {
         self.enrolled = enrolled; self.token = token
-        self.permitted = Set(permitted.map { "\($0.0):\($0.1)" })
+        self.reachable = reachable.mapValues { (host: $0.0, port: $0.1) }
         self.bridge = bridge
     }
+
+    /// The Host has moved: from now on the Mac reaches it on this port.
+    func move(_ host: HostID, toPort port: Int) { lock.withLock { reachable[host] = ("127.0.0.1", port) } }
 
     /// The keys this Mac's Bridge was started for, in order, and how many of those sessions are over.
     var bridgesOpened: [String] { lock.withLock { opened } }
@@ -73,7 +77,7 @@ private final class TestDirectory: SSHRelayDirectory, @unchecked Sendable {
         }
     }
 
-    func permits(host: String, port: Int) -> Bool { permitted.contains("\(host):\(port)") }
+    func address(ofHost id: HostID) -> (host: String, port: Int)? { lock.withLock { reachable[id] } }
 
     func hostsDocument() -> Data { Data(#"["the hosts the app describes"]"#.utf8) }
 }
@@ -145,8 +149,15 @@ private final class TestHostAuthentication: NIOSSHServerUserAuthenticationDelega
     }
 }
 
+/// A Host standing in on loopback: where it listens, and the fingerprint of the SSH host key it shows.
+private struct TestHost {
+    let channel: Channel
+    let port: Int
+    let fingerprint: String
+}
+
 /// An SSH server on loopback standing in for a Host: it lets in `device` and runs the Bridge.
-private func startTestHost(device: String, state: URL) async throws -> (Channel, Int) {
+private func startTestHost(device: String, state: URL) async throws -> TestHost {
     let arguments = bridgeLaunch(state: state)
     let hostKey = NIOSSHPrivateKey(p256Key: P256.Signing.PrivateKey())
     let channel = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
@@ -163,7 +174,8 @@ private func startTestHost(device: String, state: URL) async throws -> (Channel,
         }
         .bind(host: "127.0.0.1", port: 0)
         .get()
-    return (channel, channel.localAddress?.port ?? 0)
+    guard let fingerprint = SSHKeyFingerprint.of(hostKey.publicKey) else { throw SystemTransportError.invalidEndpoint }
+    return TestHost(channel: channel, port: channel.localAddress?.port ?? 0, fingerprint: fingerprint)
 }
 
 private struct RelayFixture {
@@ -171,16 +183,23 @@ private struct RelayFixture {
     /// The state of the Bridge of the Mac that runs the relay: a Host of its own, apart from the one behind it.
     let macState = FileManager.default.temporaryDirectory.appending(path: "northpane-relay-mac-\(UUID().uuidString)")
     let credential: NativeSSHCredential
+    let privateKey: P256.Signing.PrivateKey
     let deviceKey: String
-    let host: Channel
-    let hostPort: Int
+    /// The Host behind the Mac, as the device names it to the relay.
+    let hostID = HostID()
+    let host: TestHost
+
+    var hostPort: Int { host.port }
 
     init() async throws {
         credential = try NativeSSHCredential()
-        let key = try P256.Signing.PrivateKey(rawRepresentation: credential.rawPrivateKey)
-        deviceKey = String(openSSHPublicKey: NIOSSHPrivateKey(p256Key: key).publicKey)
-        (host, hostPort) = try await startTestHost(device: deviceKey, state: state)
+        privateKey = try P256.Signing.PrivateKey(rawRepresentation: credential.rawPrivateKey)
+        deviceKey = String(openSSHPublicKey: NIOSSHPrivateKey(p256Key: privateKey).publicKey)
+        host = try await startTestHost(device: deviceKey, state: state)
     }
+
+    /// The one Host the Mac reaches, where it listens now.
+    var reachable: [HostID: (String, Int)] { [hostID: ("127.0.0.1", hostPort)] }
 
     func relay(_ directory: TestDirectory) async throws -> (SSHRelayServer, Int) {
         let relay = try SSHRelayServer(hostKey: P256.Signing.PrivateKey(), directory: directory)
@@ -191,7 +210,30 @@ private struct RelayFixture {
         try await NativeSSHBridgeTransport.connect(
             host: "127.0.0.1", port: hostPort, username: "operator", credential: credential,
             bridgeCommand: "northpane-bridge serve --stdio",
-            relay: SSHRelayRoute(host: "127.0.0.1", port: relayPort, hostKeyFingerprint: fingerprint ?? relay.hostKeyFingerprint, enrollmentToken: token))
+            relay: SSHRelayRoute(host: "127.0.0.1", port: relayPort, hostKeyFingerprint: fingerprint ?? relay.hostKeyFingerprint,
+                                 enrollmentToken: token, hostID: hostID))
+    }
+
+    /// Asks the relay for a `direct-tcpip` channel to whatever target, as a device that named an
+    /// address would, and gives it up at once if the relay opens it.
+    func openChannel(through relay: SSHRelayServer, port relayPort: Int, to targetHost: String, targetPort: Int) async throws {
+        let route = SSHRelayRoute(host: "127.0.0.1", port: relayPort, hostKeyFingerprint: relay.hostKeyFingerprint)
+        let login = try await SSHRelayLogin.open(route, deviceKey: privateKey)
+        let connection = login.channel
+        defer { connection.close(promise: nil) }
+        do {
+            let originator = try SocketAddress(ipAddress: "127.0.0.1", port: 0)
+            let channel = try await connection.pipeline.handler(type: NIOSSHHandler.self).flatMap { ssh in
+                let promise = connection.eventLoop.makePromise(of: Channel.self)
+                ssh.createChannel(promise, channelType: .directTCPIP(.init(targetHost: targetHost, targetPort: targetPort, originatorAddress: originator))) { channel, _ in
+                    channel.eventLoop.makeSucceededVoidFuture()
+                }
+                return promise.futureResult
+            }.get()
+            try? await channel.close().get()
+        } catch {
+            throw login.channelFailure
+        }
     }
 
     /// A session with the Bridge of the Mac that runs the relay, as `signer`'s device.
@@ -201,7 +243,7 @@ private struct RelayFixture {
     }
 
     func tearDown() async {
-        try? await host.close().get()
+        try? await host.channel.close().get()
         try? FileManager.default.removeItem(at: state)
         try? FileManager.default.removeItem(at: macState)
     }
@@ -243,7 +285,7 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
 
 @Test func anEnrolledDeviceReachesItsHostThroughTheRelay() async throws {
     let fixture = try await RelayFixture()
-    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], permitted: [("127.0.0.1", fixture.hostPort)]))
+    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], reachable: fixture.reachable))
     defer { Task { await relay.stop(); await fixture.tearDown() } }
 
     let signer = try ClientDeviceSigner()
@@ -257,7 +299,7 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
 
 @Test func aDeviceEnrollsWithTheTokenOnceAndTheTokenIsSpent() async throws {
     let fixture = try await RelayFixture()
-    let directory = TestDirectory(token: "enroll-me", permitted: [("127.0.0.1", fixture.hostPort)])
+    let directory = TestDirectory(token: "enroll-me", reachable: fixture.reachable)
     let (relay, port) = try await fixture.relay(directory)
     defer { Task { await relay.stop(); await fixture.tearDown() } }
 
@@ -272,22 +314,56 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
 
 @Test func aDeviceTheRelayDoesNotKnowIsRefused() async throws {
     let fixture = try await RelayFixture()
-    let (relay, port) = try await fixture.relay(TestDirectory(token: "the-real-one", permitted: [("127.0.0.1", fixture.hostPort)]))
+    let (relay, port) = try await fixture.relay(TestDirectory(token: "the-real-one", reachable: fixture.reachable))
     defer { Task { await relay.stop(); await fixture.tearDown() } }
     await expectRelayError(.deviceNotEnrolled) { _ = try await fixture.connect(through: relay, port: port) }
     await expectRelayError(.deviceNotEnrolled) { _ = try await fixture.connect(through: relay, port: port, token: "a-guess") }
 }
 
+/// A Host the Operator did not enable is refused, however it is named.
 @Test func theRelayOpensNothingButTheHostsItWasGiven() async throws {
     let fixture = try await RelayFixture()
-    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], permitted: [("127.0.0.1", 9)]))
+    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], reachable: [HostID(): ("127.0.0.1", fixture.hostPort)]))
     defer { Task { await relay.stop(); await fixture.tearDown() } }
     await expectRelayError(.targetRefused) { _ = try await fixture.connect(through: relay, port: port) }
 }
 
+/// A Host behind the Mac is named by its ID and dialled where the Mac reaches it now: when it
+/// moves, the same route reaches it at its new address, with nothing changed on the device.
+@Test func aHostThatMovedIsDialledWhereTheMacReachesItNow() async throws {
+    let fixture = try await RelayFixture()
+    let directory = TestDirectory(enrolled: [fixture.deviceKey], reachable: fixture.reachable)
+    let (relay, port) = try await fixture.relay(directory)
+    // The same Host at a new address: another server, with a key of its own, so the two can be told apart.
+    let moved = try await startTestHost(device: fixture.deviceKey, state: fixture.macState)
+    defer { Task { await relay.stop(); try? await moved.channel.close().get(); await fixture.tearDown() } }
+
+    let before = try await fixture.connect(through: relay, port: port)
+    #expect(before.serverHostKeyFingerprint == fixture.host.fingerprint)
+    await before.close()
+
+    directory.move(fixture.hostID, toPort: moved.port)
+    let after = try await fixture.connect(through: relay, port: port)
+    #expect(after.serverHostKeyFingerprint == moved.fingerprint)
+    await after.close()
+}
+
+/// The relay opens no address a device names, not even the one it reaches an enabled Host at: a
+/// Host behind the Mac is reached by its ID or not at all, and where it is stays the Mac's to know.
+@Test func theRelayOpensNoAddressADeviceNames() async throws {
+    let fixture = try await RelayFixture()
+    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], reachable: fixture.reachable))
+    defer { Task { await relay.stop(); await fixture.tearDown() } }
+    for target in ["127.0.0.1", "localhost", "[::1]", fixture.hostID.rawValue.uuidString + ".local"] {
+        await expectRelayError(.targetRefused) { try await fixture.openChannel(through: relay, port: port, to: target, targetPort: fixture.hostPort) }
+    }
+    // The ID itself opens it, whatever port the device puts beside it: the port is the Mac's to know.
+    try await fixture.openChannel(through: relay, port: port, to: SSHRelayRoute.target(for: fixture.hostID), targetPort: 9)
+}
+
 @Test func aRelayShowingAnotherKeyIsRefused() async throws {
     let fixture = try await RelayFixture()
-    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], permitted: [("127.0.0.1", fixture.hostPort)]))
+    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], reachable: fixture.reachable))
     defer { Task { await relay.stop(); await fixture.tearDown() } }
     do {
         _ = try await fixture.connect(through: relay, port: port, fingerprint: "SHA256:notTheRelaysKey")
@@ -300,7 +376,7 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
 
 @Test func removingADeviceFromTheRelayEndsWhatItHasOpen() async throws {
     let fixture = try await RelayFixture()
-    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], permitted: [("127.0.0.1", fixture.hostPort)]))
+    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], reachable: fixture.reachable))
     defer { Task { await relay.stop(); await fixture.tearDown() } }
 
     let signer = try ClientDeviceSigner()
@@ -313,7 +389,7 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
 
 @Test func enrollingWithTheTokenReadsTheHostsTheRelayReaches() async throws {
     let fixture = try await RelayFixture()
-    let directory = TestDirectory(token: "from-the-qr-code", permitted: [("127.0.0.1", fixture.hostPort)])
+    let directory = TestDirectory(token: "from-the-qr-code", reachable: fixture.reachable)
     let (relay, port) = try await fixture.relay(directory)
     defer { Task { await relay.stop(); await fixture.tearDown() } }
     let route = SSHRelayRoute(host: "127.0.0.1", port: port, hostKeyFingerprint: relay.hostKeyFingerprint, enrollmentToken: "from-the-qr-code")
@@ -337,7 +413,7 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
 /// device's choosing runs on the Mac.
 @Test func theRelayRunsNoCommandOfTheDevicesChoosing() async throws {
     let fixture = try await RelayFixture()
-    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], permitted: [("127.0.0.1", fixture.hostPort)]))
+    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], reachable: fixture.reachable))
     defer { Task { await relay.stop(); await fixture.tearDown() } }
     // The relay as if it were a Host: a session asking it for a command gets nothing back.
     let deployment = try NativeSFTPBridgeDeployment(host: "127.0.0.1", port: port, username: SSHRelayRoute.username,
@@ -391,7 +467,7 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
 /// is told the relay will not open it, as for a Host the Operator did not enable.
 @Test func aRelayWhoseAppOffersNoBridgeRefusesTheSession() async throws {
     let fixture = try await RelayFixture()
-    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], permitted: [("127.0.0.1", fixture.hostPort)]))
+    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], reachable: fixture.reachable))
     defer { Task { await relay.stop(); await fixture.tearDown() } }
     await expectRelayError(.targetRefused) { _ = try await fixture.connectToMac(relay, port: port, as: try ClientDeviceSigner()) }
 }
@@ -516,7 +592,7 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
 /// with both addresses reaches it through either.
 @Test func theRelayListensOnEveryAddressItIsGivenOnOnePort() async throws {
     let fixture = try await RelayFixture()
-    let directory = TestDirectory(enrolled: [fixture.deviceKey], permitted: [("127.0.0.1", fixture.hostPort)])
+    let directory = TestDirectory(enrolled: [fixture.deviceKey], reachable: fixture.reachable)
     let relay = try SSHRelayServer(hostKey: P256.Signing.PrivateKey(), directory: directory)
     let port = try await relay.start(addresses: ["127.0.0.1", "::1"], port: 0)
     defer { Task { await relay.stop(); await fixture.tearDown() } }
@@ -533,7 +609,7 @@ private func expectRelayError(_ expected: SSHRelayError, _ body: () async throws
 /// answer: what lets a device move on to the relay's next address.
 @Test func aRelayThatDoesNotAnswerIsUnreachable() async throws {
     let fixture = try await RelayFixture()
-    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], permitted: [("127.0.0.1", fixture.hostPort)]))
+    let (relay, port) = try await fixture.relay(TestDirectory(enrolled: [fixture.deviceKey], reachable: fixture.reachable))
     await relay.stop()
     defer { Task { await fixture.tearDown() } }
     await expectRelayError(.relayUnreachable) { _ = try await fixture.connect(through: relay, port: port) }

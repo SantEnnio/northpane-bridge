@@ -4,6 +4,7 @@ import Foundation
 import NIOCore
 import NIOPosix
 import NIOSSH
+import NorthpaneProtocol
 
 /// What the relay asks of the app that hosts it. Called from the relay's own thread, so an
 /// implementation keeps its answers behind a lock.
@@ -12,8 +13,10 @@ public protocol SSHRelayDirectory: Sendable {
     func isEnrolled(_ publicKey: String) -> Bool
     /// Enrolls the key when `token` is the enrollment token open now, and spends the token.
     func enroll(_ publicKey: String, token: String) -> Bool
-    /// Whether the relay may connect to this Host's SSH port.
-    func permits(host: String, port: Int) -> Bool
+    /// Where this Mac reaches the Host with this ID now, and on which SSH port, when the Operator
+    /// enabled it; nil for a Host not enabled, or not known. Asked as each channel opens and kept
+    /// by nothing in the relay: a Host that has moved is dialled where it is.
+    func address(ofHost id: HostID) -> (host: String, port: Int)?
     /// What an enrolled device is told about the Hosts it can reach through the relay, in whatever
     /// form the app reads: the relay passes it on unread.
     func hostsDocument() -> Data
@@ -86,8 +89,9 @@ public struct SSHRelayBridge: Sendable {
 /// The SSH server inside the Mac app that carries an enrolled device's own SSH session to a Host
 /// the Mac can reach, and joins a device to the Bridge of the Mac itself when the app offers it. It
 /// takes a device's key and nothing else, opens `direct-tcpip` channels to the Hosts the Operator
-/// enabled and nothing else, and never runs a shell or a command of the device's on the Mac: all
-/// it starts there is the Bridge the app hands it. A session it carries to a Host is the device's
+/// enabled and nothing else — each named by its ID and dialled where the Mac reaches it now, never
+/// at an address the device names —, and never runs a shell or a command of the device's on the
+/// Mac: all it starts there is the Bridge the app hands it. A session it carries to a Host is the device's
 /// with that Host, end to end: the relay sees where it goes and how much, not what. One with the
 /// Mac's own Bridge ends on this Mac, and there the Bridge asks of the device what it asks over
 /// SSH: to pair, and to prove its key in every session.
@@ -195,16 +199,18 @@ public final class SSHRelayServer: @unchecked Sendable {
         }
     }
 
-    /// A channel the device opened: a `direct-tcpip` one to a Host the Operator enabled is joined
-    /// to a new connection to that Host; a session may ask for the list of those Hosts or for the
-    /// Bridge of this Mac, and for nothing else; anything else is refused.
+    /// A channel the device opened: a `direct-tcpip` one that names a Host the Operator enabled
+    /// (`SSHRelayRoute.target(for:)`) is joined to a new connection to that Host, where the Mac
+    /// reaches it now; a session may ask for the list of those Hosts or for the Bridge of this
+    /// Mac, and for nothing else; anything else is refused, an address in place of a Host included.
     private static func forward(_ child: Channel, type: SSHChannelType, authentication: RelayServerAuthentication,
                                 directory: any SSHRelayDirectory) -> EventLoopFuture<Void> {
         if type == .session, let device = authentication.authenticatedKey {
             return child.pipeline.addHandler(RelaySession(device: device, directory: directory))
         }
         guard case let .directTCPIP(request) = type, authentication.authenticatedKey != nil,
-              directory.permits(host: request.targetHost, port: request.targetPort) else {
+              let hostID = SSHRelayRoute.host(named: request.targetHost),
+              let address = directory.address(ofHost: hostID) else {
             return child.eventLoop.makeFailedFuture(SSHRelayError.targetRefused)
         }
         let (device, host) = RelayJoint.pair()
@@ -216,7 +222,7 @@ public final class SSHRelayServer: @unchecked Sendable {
                 .channelInitializer { target in
                     target.eventLoop.makeCompletedFuture { try target.pipeline.syncOperations.addHandler(hostSide.value) }
                 }
-                .connect(host: request.targetHost, port: request.targetPort)
+                .connect(host: address.host, port: address.port)
                 .map { _ in () }
         }
     }

@@ -26,7 +26,9 @@ public struct ConnectionProfile: Identifiable, Equatable, Codable, Sendable {
     /// written differently for each. Absent until a connection settles it.
     public var hostShell: HostShell?
     /// The Mac that carries this device's SSH session to the Host, when the Host is reached through
-    /// one; `endpoint` is then the Host as that Mac reaches it. Absent for a direct route.
+    /// one; `endpoint` then holds the account to sign in with and the Host's address as that Mac
+    /// reached it when the route was saved. The device names the Host to the relay by its ID, and
+    /// the Mac dials it where it reaches it now. Absent for a direct route.
     public var relay: RelayProfile?
 
     public init(id: UUID = UUID(), kind: TransportKind, endpoint: String? = nil, priority: Int = 0, credentialReference: CredentialReference? = nil, expectedHostFingerprint: String? = nil, expectedTransportFingerprint: String? = nil, lastReachedTailnet: String? = nil, hostShell: HostShell? = nil, relay: RelayProfile? = nil) {

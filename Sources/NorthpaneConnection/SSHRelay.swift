@@ -25,15 +25,30 @@ public struct SSHRelayRoute: Equatable, Sendable {
     public let port: Int
     public let hostKeyFingerprint: String
     public let enrollmentToken: String?
+    /// The Host behind the Mac this route leads to, when it leads to one: the device names it to
+    /// the relay by this ID, and the Mac dials it where it reaches it now. Nil on a route to the
+    /// Mac's own Bridge, or to the relay's list of Hosts.
+    public let hostID: HostID?
 
-    public init(host: String, port: Int, hostKeyFingerprint: String, enrollmentToken: String? = nil) {
+    public init(host: String, port: Int, hostKeyFingerprint: String, enrollmentToken: String? = nil, hostID: HostID? = nil) {
         self.host = host; self.port = port; self.hostKeyFingerprint = hostKeyFingerprint; self.enrollmentToken = enrollmentToken
+        self.hostID = hostID
     }
 
-    /// The relay of a saved route, at one of its addresses.
-    public init(_ profile: RelayProfile, address: String, enrollmentToken: String? = nil) {
-        self.init(host: address, port: profile.port, hostKeyFingerprint: profile.hostKeyFingerprint, enrollmentToken: enrollmentToken)
+    /// The relay of a saved route, at one of its addresses; with `hostID`, to that Host behind it.
+    public init(_ profile: RelayProfile, address: String, enrollmentToken: String? = nil, hostID: HostID? = nil) {
+        self.init(host: address, port: profile.port, hostKeyFingerprint: profile.hostKeyFingerprint, enrollmentToken: enrollmentToken, hostID: hostID)
     }
+
+    /// What a `direct-tcpip` channel names as its target: the Host's ID in place of an address, and
+    /// port 0, the port being the Mac's to know along with the address. The Mac resolves the ID to
+    /// where it reaches that Host now, so a Host that has moved is still reached, and only a Host
+    /// the Operator enabled is: a device dials no address of a Host behind the Mac, and the relay
+    /// opens no address a device names.
+    public static func target(for host: HostID) -> String { host.rawValue.uuidString }
+
+    /// The Host a `direct-tcpip` target names, or nil for anything that is not a Host's ID.
+    public static func host(named target: String) -> HostID? { UUID(uuidString: target).map(HostID.init(rawValue:)) }
 }
 
 public enum SSHRelayError: Error, Equatable, Sendable {
@@ -139,13 +154,18 @@ struct HostSSHConnection: Sendable {
         try? await relay?.close().get()
     }
 
+    /// Dials `host` and `port` itself or, with `relay`, asks the relay for a channel to the Host
+    /// `relay.hostID` names, which the Mac dials where it reaches it: `host` and `port` are then
+    /// the device's record of the Host, and nothing the device dials.
     static func open(
         host: String, port: Int, relay: SSHRelayRoute?, relayKey: P256.Signing.PrivateKey?,
         userAuthentication: any NIOSSHClientUserAuthenticationDelegate & Sendable, hostKeys: PinnedHostKeyDelegate
     ) async throws -> HostSSHConnection {
         if let relay {
             guard let relayKey else { throw SSHRelayError.deviceNotEnrolled }
-            let opened = try await SSHRelayClient.open(relay, deviceKey: relayKey, targetHost: host, targetPort: port) { channel in
+            // A route through a Mac leads to a Host behind it or it leads nowhere.
+            guard let hostID = relay.hostID else { throw SystemTransportError.invalidEndpoint }
+            let opened = try await SSHRelayClient.open(relay, deviceKey: relayKey, to: hostID) { channel in
                 try channel.pipeline.syncOperations.addHandlers(
                     SSHChannelByteStream(),
                     NIOSSHHandler(role: .client(.init(userAuthDelegate: userAuthentication, serverAuthDelegate: hostKeys)),
@@ -274,20 +294,21 @@ enum SSHRelayClient {
     }
 
     /// Logs in to the relay with the device's key, with its pinned host key, and opens a channel to
-    /// the Host's SSH port; `configure` sets up that channel's pipeline — the device's own SSH
-    /// session with the Host. The relay's key is always pinned: a device never takes a relay on
-    /// first sight.
+    /// the SSH port of the Host `host` names, where the Mac reaches it now; `configure` sets up
+    /// that channel's pipeline — the device's own SSH session with the Host. The relay's key is
+    /// always pinned: a device never takes a relay on first sight.
     static func open(
-        _ route: SSHRelayRoute, deviceKey: P256.Signing.PrivateKey, targetHost: String, targetPort: Int,
+        _ route: SSHRelayRoute, deviceKey: P256.Signing.PrivateKey, to host: HostID,
         configure: @escaping @Sendable (Channel) throws -> Void
     ) async throws -> Opened {
         let login = try await SSHRelayLogin.open(route, deviceKey: deviceKey)
         let relay = login.channel
         do {
             let originator = try SocketAddress(ipAddress: "127.0.0.1", port: 0)
+            let target = SSHChannelType.DirectTCPIP(targetHost: SSHRelayRoute.target(for: host), targetPort: 0, originatorAddress: originator)
             let forward = try await relay.pipeline.handler(type: NIOSSHHandler.self).flatMap { ssh in
                 let promise = relay.eventLoop.makePromise(of: Channel.self)
-                ssh.createChannel(promise, channelType: .directTCPIP(.init(targetHost: targetHost, targetPort: targetPort, originatorAddress: originator))) { channel, _ in
+                ssh.createChannel(promise, channelType: .directTCPIP(target)) { channel, _ in
                     channel.eventLoop.makeCompletedFuture { try configure(channel) }
                 }
                 return promise.futureResult
