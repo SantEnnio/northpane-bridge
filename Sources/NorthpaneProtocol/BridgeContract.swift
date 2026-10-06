@@ -1,7 +1,7 @@
 import Foundation
 
 public enum NorthpaneRelease {
-    public static let version = "1.0.12"
+    public static let version = "1.0.13"
 }
 
 public enum BridgeProtocol {
