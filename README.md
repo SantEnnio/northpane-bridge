@@ -72,6 +72,16 @@ What it runs, and nothing else:
   counts, so turning it on is your own decision about your own Google account, and you can
   withdraw it. The choice is kept in `~/.northpane/services/agent-usage-consent-v1.json`.
 
+## When a Pane was last used
+
+Herdr reports no times, so the Bridge tells an app when each Pane was last used from the Pane's
+terminal: the system notes when a terminal is written to and read from, which is what `w` shows as
+idle time. To know which terminal is which Pane, it looks at the processes Herdr starts directly,
+one per Pane, belonging to your own user, and reads the `HERDR_PANE_ID` Herdr puts in their
+environment. Nothing else in that environment is kept or sent, nor anything the terminal shows:
+an app receives one time per Pane, to the second. The process table is read again at most every
+30 seconds, sooner when a new Pane appears. On macOS and Linux only; on Windows no time is sent.
+
 ## What is in this repository
 
 - `northpane-bridge`: the Bridge. `northpane-bridge serve --stdio` is what an SSH session

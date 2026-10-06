@@ -1644,6 +1644,10 @@ nonisolated struct Northpane_Bridge_V1_Pane: Sendable {
   /// paths an agent prints in the terminal are resolved against it.
   var cwd: String = String()
 
+  /// When the Pane's terminal was last written to or read from, in whole seconds since the Unix
+  /// epoch (revision 21). 0 when the Host cannot tell, which is not the same as never.
+  var lastActivityUnixSeconds: Int64 = 0
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   init() {}
@@ -3778,7 +3782,7 @@ nonisolated extension Northpane_Bridge_V1_Tab: SwiftProtobuf.Message, SwiftProto
 
 nonisolated extension Northpane_Bridge_V1_Pane: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".Pane"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}title\0\u{3}workspace_id\0\u{3}tab_id\0\u{1}revision\0\u{1}agent\0\u{3}agent_status\0\u{1}focused\0\u{1}cwd\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}title\0\u{3}workspace_id\0\u{3}tab_id\0\u{1}revision\0\u{1}agent\0\u{3}agent_status\0\u{1}focused\0\u{1}cwd\0\u{3}last_activity_unix_seconds\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3795,6 +3799,7 @@ nonisolated extension Northpane_Bridge_V1_Pane: SwiftProtobuf.Message, SwiftProt
       case 7: try { try decoder.decodeSingularStringField(value: &self.agentStatus) }()
       case 8: try { try decoder.decodeSingularBoolField(value: &self.focused) }()
       case 9: try { try decoder.decodeSingularStringField(value: &self.cwd) }()
+      case 10: try { try decoder.decodeSingularInt64Field(value: &self.lastActivityUnixSeconds) }()
       default: break
       }
     }
@@ -3828,6 +3833,9 @@ nonisolated extension Northpane_Bridge_V1_Pane: SwiftProtobuf.Message, SwiftProt
     if !self.cwd.isEmpty {
       try visitor.visitSingularStringField(value: self.cwd, fieldNumber: 9)
     }
+    if self.lastActivityUnixSeconds != 0 {
+      try visitor.visitSingularInt64Field(value: self.lastActivityUnixSeconds, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3841,6 +3849,7 @@ nonisolated extension Northpane_Bridge_V1_Pane: SwiftProtobuf.Message, SwiftProt
     if lhs.agentStatus != rhs.agentStatus {return false}
     if lhs.focused != rhs.focused {return false}
     if lhs.cwd != rhs.cwd {return false}
+    if lhs.lastActivityUnixSeconds != rhs.lastActivityUnixSeconds {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

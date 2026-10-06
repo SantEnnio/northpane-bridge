@@ -126,3 +126,10 @@ and is answered `device_revoked`. The private endpoint no longer pairs a device
 (`pairing_requires_ssh`): anyone on the network can reach it, so a device pairs over SSH or the
 Host's own socket and then proves its key over the endpoint. A client that sees an older revision
 cannot prove its device, and must not treat such a session as proven.
+
+Revision 21 adds `Pane.last_activity_unix_seconds`: when the Pane's terminal was last written to or
+read from, in whole seconds, as the Host's own terminal device records it. The Bridge finds each
+Pane's terminal through the processes Herdr starts in it, which carry `HERDR_PANE_ID`; 0 means the
+Host cannot tell (Windows, or a Pane whose process it does not find), not that the Pane was never
+used. A client orders and groups Panes by it; an older client ignores the field, and a client that
+sees an older revision has no time from the Host.

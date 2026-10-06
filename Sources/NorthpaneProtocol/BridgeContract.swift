@@ -6,7 +6,7 @@ public enum NorthpaneRelease {
 
 public enum BridgeProtocol {
     public static let major = 1
-    public static let schemaRevision = 20
+    public static let schemaRevision = 21
     public static let maximumFrameBytes = 1_048_576
     /// The first revision whose sessions authenticate the Client device by a proof of its key
     /// (`HandshakeAccepted.deviceChallenge`, `DeviceSessionProof`) rather than by the identity it

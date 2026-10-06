@@ -182,3 +182,16 @@ import Testing
     }
     #expect(command.kind == .setAgentUsageConsent && command.targetID == "guarded" && command.consent)
 }
+
+@Test func aPanesLastActivityRoundTripsToTheSecondAndUnknownStaysUnknown() throws {
+    let snapshot = WireRuntimeSnapshot(hostID: HostID(), incarnationID: "inc", snapshotID: "snap", nextEventSequence: 1,
+        panes: [WirePane(id: "w1:p1", title: "Build", lastActivityAt: Date(timeIntervalSince1970: 1_791_288_000.7)),
+                WirePane(id: "w1:p2", title: "Shell")],
+        capabilities: [.observeRuntime], workspaces: [], tabs: [])
+    let envelope = Envelope(connectionID: ConnectionID(), channelID: ChannelID(), payload: .runtimeSnapshot(snapshot))
+    guard case let .runtimeSnapshot(decoded) = try FrameCodec.decode(FrameCodec.encode(envelope)).payload else {
+        Issue.record("not a snapshot"); return
+    }
+    #expect(decoded.panes[0].lastActivityAt == Date(timeIntervalSince1970: 1_791_288_000))
+    #expect(decoded.panes[1].lastActivityAt == nil)
+}

@@ -1321,6 +1321,8 @@ private actor BridgeHostContext {
     /// The agent CLIs found on this Host, each read through the session its installation holds.
     private let agentUsage: AgentUsageMonitor
     private var runtime: HerdrRuntime?
+    /// One per Bridge process: it keeps the map of Panes to terminals between snapshots.
+    private let paneActivity = PaneActivityProbe()
     private var herdrServerProcess: Process?
     private var herdrExecutable: URL?
     private var cachedHerdrVersion: String?
@@ -1391,7 +1393,7 @@ private actor BridgeHostContext {
         if runtime == nil {
             let runner = try HerdrProcessRunner()
             herdrExecutable = runner.executableURL
-            runtime = HerdrRuntime(runner: runner)
+            runtime = HerdrRuntime(runner: runner, activity: paneActivity)
         }
         return try await runtime!.currentSnapshot(hostID: authority.identity.hostID, sessionName: sessionName)
     }
@@ -1412,7 +1414,7 @@ private actor BridgeHostContext {
         if runtime == nil {
             let runner = try HerdrProcessRunner()
             herdrExecutable = runner.executableURL
-            runtime = HerdrRuntime(runner: runner)
+            runtime = HerdrRuntime(runner: runner, activity: paneActivity)
         }
         let created = try await runtime!.createWorkspace(label: label, workingDirectory: workingDirectory,
                                                          sessionName: sessionName)
@@ -1465,7 +1467,7 @@ private actor BridgeHostContext {
         if runtime == nil {
             let runner = try HerdrProcessRunner()
             herdrExecutable = runner.executableURL
-            runtime = HerdrRuntime(runner: runner)
+            runtime = HerdrRuntime(runner: runner, activity: paneActivity)
         }
         let created = try await open(runtime!)
         guard agentKind != .shell else {
@@ -1491,7 +1493,7 @@ private actor BridgeHostContext {
         if runtime == nil {
             let runner = try HerdrProcessRunner()
             herdrExecutable = runner.executableURL
-            runtime = HerdrRuntime(runner: runner)
+            runtime = HerdrRuntime(runner: runner, activity: paneActivity)
         }
         try await runtime!.closeWorkspace(workspaceID: workspaceID, sessionName: sessionName)
     }

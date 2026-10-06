@@ -56,6 +56,8 @@ revision_eighteen_hash=$(shasum -a 256 "$repository_root/Protocol/compatibility/
 [ "$revision_eighteen_hash" = "675c6eb12b07d7a8ff26aa589b954b4d9de2ff45b9dc750ea5a8a849e91bf9fc" ]
 revision_nineteen_hash=$(shasum -a 256 "$repository_root/Protocol/compatibility/bridge-v1-revision-19.proto" | awk '{print $1}')
 [ "$revision_nineteen_hash" = "98e03a3b82742cb74a797e96feea392bfb961fcbfeeb967ee86f6c7e6f6236e8" ]
-diff -u "$repository_root/Protocol/compatibility/bridge-v1-revision-20.proto" "$repository_root/Protocol/bridge-v1.proto"
+revision_twenty_hash=$(shasum -a 256 "$repository_root/Protocol/compatibility/bridge-v1-revision-20.proto" | awk '{print $1}')
+[ "$revision_twenty_hash" = "253c737a395f36287d9ee2e4ed453b1f9d0dcbae12975141a8baca249a891421" ]
+diff -u "$repository_root/Protocol/compatibility/bridge-v1-revision-21.proto" "$repository_root/Protocol/bridge-v1.proto"
 
-echo "Generated Protobuf source matches revision 20; frozen revisions 1 to 19 are unchanged"
+echo "Generated Protobuf source matches revision 21; frozen revisions 1 to 20 are unchanged"

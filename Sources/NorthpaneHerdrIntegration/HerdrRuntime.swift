@@ -125,11 +125,14 @@ public actor HerdrRuntime {
     private let runner: any HerdrCommandRunning
     private let incarnationID: String
     private let capabilities: Set<Capability>
+    private let activity: (any PaneActivityReading)?
 
-    public init(runner: any HerdrCommandRunning, incarnationID: String = UUID().uuidString, capabilities: Set<Capability> = Set(Capability.allCases)) {
+    public init(runner: any HerdrCommandRunning, incarnationID: String = UUID().uuidString, capabilities: Set<Capability> = Set(Capability.allCases),
+                activity: (any PaneActivityReading)? = nil) {
         self.runner = runner
         self.incarnationID = incarnationID
         self.capabilities = CapabilityRegistry.validated(capabilities)
+        self.activity = activity
     }
 
     public func currentSnapshot(hostID: HostID, sessionName: String? = nil, attempts: Int = 3) async throws -> WireRuntimeSnapshot {
@@ -138,12 +141,15 @@ public actor HerdrRuntime {
             let first = try await readSnapshot(sessionName: sessionName)
             let second = try await readSnapshot(sessionName: sessionName)
             guard first == second else { continue }
+            // Read after the two reads agree, so a terminal stamped between them never makes an
+            // unchanged snapshot look unstable.
+            let activityByPane = activity?.lastActivity(paneIDs: first.panes.map(\.id), now: Date()) ?? [:]
             return WireRuntimeSnapshot(
                 hostID: hostID,
                 incarnationID: incarnationID,
                 snapshotID: UUID().uuidString,
                 nextEventSequence: 0,
-                panes: first.panes,
+                panes: first.panes.map { $0.with(lastActivityAt: activityByPane[$0.id]) },
                 capabilities: capabilities,
                 workspaces: first.workspaces,
                 tabs: first.tabs

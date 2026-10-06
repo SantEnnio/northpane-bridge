@@ -39,8 +39,16 @@ public struct WirePane: Equatable, Codable, Sendable {
     public let focused: Bool
     /// The working directory of the pane's foreground process on the Host (schema revision 5).
     public let cwd: String?
-    public init(id: String, title: String, workspaceID: String = "", tabID: String = "", revision: Int = 0, agent: String? = nil, agentStatus: String = "unknown", focused: Bool = false, cwd: String? = nil) {
-        self.id = id; self.title = title; self.workspaceID = workspaceID; self.tabID = tabID; self.revision = revision; self.agent = agent; self.agentStatus = agentStatus; self.focused = focused; self.cwd = cwd
+    /// When the Pane's terminal was last written to or read from, to the second (schema revision
+    /// 21); nil when the Host cannot tell.
+    public let lastActivityAt: Date?
+    public init(id: String, title: String, workspaceID: String = "", tabID: String = "", revision: Int = 0, agent: String? = nil, agentStatus: String = "unknown", focused: Bool = false, cwd: String? = nil, lastActivityAt: Date? = nil) {
+        self.id = id; self.title = title; self.workspaceID = workspaceID; self.tabID = tabID; self.revision = revision; self.agent = agent; self.agentStatus = agentStatus; self.focused = focused; self.cwd = cwd; self.lastActivityAt = lastActivityAt
+    }
+
+    /// The same Pane with its last activity.
+    public func with(lastActivityAt: Date?) -> WirePane {
+        WirePane(id: id, title: title, workspaceID: workspaceID, tabID: tabID, revision: revision, agent: agent, agentStatus: agentStatus, focused: focused, cwd: cwd, lastActivityAt: lastActivityAt)
     }
 }
 
