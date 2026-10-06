@@ -80,7 +80,9 @@ idle time. To know which terminal is which Pane, it looks at the processes Herdr
 one per Pane, belonging to your own user, and reads the `HERDR_PANE_ID` Herdr puts in their
 environment. Nothing else in that environment is kept or sent, nor anything the terminal shows:
 an app receives one time per Pane, to the second. The process table is read again at most every
-30 seconds, sooner when a new Pane appears. On macOS and Linux only; on Windows no time is sent.
+30 seconds, sooner when a new Pane appears. Herdr says nothing while a Pane's process works without
+changing status, so while an app watches, the Bridge looks at the terminals every 20 seconds and
+sends a new snapshot when one of them was used. On macOS and Linux only; on Windows no time is sent.
 
 ## What is in this repository
 

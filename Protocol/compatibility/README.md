@@ -132,4 +132,6 @@ read from, in whole seconds, as the Host's own terminal device records it. The B
 Pane's terminal through the processes Herdr starts in it, which carry `HERDR_PANE_ID`; 0 means the
 Host cannot tell (Windows, or a Pane whose process it does not find), not that the Pane was never
 used. A client orders and groups Panes by it; an older client ignores the field, and a client that
-sees an older revision has no time from the Host.
+sees an older revision has no time from the Host. Since Bridge 1.0.13 an observation also sends a
+snapshot when a Pane's time has moved since the last one sent, checked every 20 seconds: Herdr emits
+no event while a process writes without changing status.

@@ -430,6 +430,7 @@ struct NorthpaneBridge {
                             }
                         })
                     }
+                    await observation.watchActivity(context: context, sessionName: sessionName, transport: transport, connectionID: connectionID, channelID: channelID)
                 } catch {
                     subscription.stop()
                     guard ProcessInfo.processInfo.environment["NORTHPANE_HERDR_EVENT_SOCKET_OPTIONAL"] == "1" else {
@@ -1064,7 +1065,14 @@ private actor BridgeConnectionObservation {
     /// so a client never keeps a stale revision for long.
     static let revisionOnlyInterval: TimeInterval = 1.0
 
+    /// Herdr sends nothing while a Pane's process writes without changing status, so the terminals
+    /// are looked at on a timer and a snapshot goes out when one of them was used since the last.
+    private var activityWatch: Task<Void, Never>?
+    static let activityInterval: Duration = .seconds(20)
+
     func begin(sessionName: String?) {
+        activityWatch?.cancel()
+        activityWatch = nil
         snapshot = nil
         self.sessionName = sessionName
         ready = false
@@ -1097,7 +1105,34 @@ private actor BridgeConnectionObservation {
         await onPanesChanged?(paneIDs)
     }
 
+    func watchActivity(context: BridgeHostContext, sessionName: String?, transport: any BridgeTransport,
+                       connectionID: ConnectionID, channelID: ChannelID) {
+        activityWatch?.cancel()
+        activityWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.activityInterval)
+                guard !Task.isCancelled, let self else { return }
+                await self.checkActivity(context: context, sessionName: sessionName, transport: transport, connectionID: connectionID, channelID: channelID)
+            }
+        }
+    }
+
+    private func checkActivity(context: BridgeHostContext, sessionName: String?, transport: any BridgeTransport,
+                               connectionID: ConnectionID, channelID: ChannelID) async {
+        guard ready, let pushed = lastPushed else { return }
+        let current = await context.paneActivity(paneIDs: pushed.panes.map(\.id))
+        let used = pushed.panes.contains { pane in
+            guard let latest = current[pane.id] else { return false }
+            return pane.lastActivityAt.map { latest > $0 } ?? true
+        }
+        guard used else { return }
+        pendingEvent = true
+        await refreshIfNeeded(context: context, sessionName: sessionName, transport: transport, connectionID: connectionID, channelID: channelID)
+    }
+
     func subscriptionClosed() {
+        activityWatch?.cancel()
+        activityWatch = nil
         ready = false
         snapshot = nil
         deferredPush?.cancel()
@@ -1323,6 +1358,12 @@ private actor BridgeHostContext {
     private var runtime: HerdrRuntime?
     /// One per Bridge process: it keeps the map of Panes to terminals between snapshots.
     private let paneActivity = PaneActivityProbe()
+
+    /// When each Pane was last used, without asking Herdr: what the activity watch compares with
+    /// the snapshot last sent.
+    func paneActivity(paneIDs: [String]) -> [String: Date] {
+        paneActivity.lastActivity(paneIDs: paneIDs, now: Date())
+    }
     private var herdrServerProcess: Process?
     private var herdrExecutable: URL?
     private var cachedHerdrVersion: String?
