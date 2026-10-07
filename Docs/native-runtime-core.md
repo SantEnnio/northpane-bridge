@@ -35,7 +35,10 @@ unconditionally in `KittyGraphics.swift`. `build-static-linux.sh` applies the
 small patches in `Patches/` through `prepare-swiftterm-musl.sh`.
 The helper checks the exact revision and the full input-file SHA-256 and is
 idempotent for the second architecture. Unknown source files fail the build;
-The patches change libc import selection and ioctl request typing, not terminal behavior. Direct
+The patches select the available libc and exclude unused upstream PTY/process
+and Apple UI wrappers when building for musl. Northpane uses its own C PTY
+shim; the upstream wrappers assume Glibc's Swift ioctl overlays. The manifest
+patch also permits a musl build hosted on macOS. Terminal behavior is unchanged. Direct
 musl builds must run that helper first.
 
 The checked 1.20.0 manifest includes `SwiftTermBuildInfoPlugin` and does not

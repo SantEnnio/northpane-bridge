@@ -1,0 +1,10 @@
+diff --git a/Package.swift b/Package.swift
+--- a/Package.swift
++++ b/Package.swift
+@@ -6,5 +6,1 @@
+-#if os(Linux) || os(Windows)
+-let platformExcludes = ["Apple", "Mac", "iOS"]
++let platformExcludes = ["Apple", "Mac", "iOS", "Pty.swift", "LocalProcess.swift", "HeadlessTerminal.swift"]
+-#else
+-let platformExcludes: [String] = []
+-#endif
