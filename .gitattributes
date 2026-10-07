@@ -1,0 +1,2 @@
+# PTY recordings preserve all control bytes and line endings on every platform.
+*.ansi binary
