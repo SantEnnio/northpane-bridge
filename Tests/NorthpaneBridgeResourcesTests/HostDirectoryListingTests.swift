@@ -71,5 +71,9 @@ private func makeHome() throws -> URL {
     let listing = try HostDirectoryListing.list(path: systemDrive.path)
     #expect(listing.parent == HostDirectoryListing.computerPath)
     #expect(listing.folders.contains("Users"))
+    let users = try HostDirectoryListing.list(path: systemDrive.appending(path: "Users").path)
+    #expect(users.parent == systemDrive.path)
+    let back = try HostDirectoryListing.list(path: try #require(users.parent))
+    #expect(back.parent == HostDirectoryListing.computerPath)
 }
 #endif

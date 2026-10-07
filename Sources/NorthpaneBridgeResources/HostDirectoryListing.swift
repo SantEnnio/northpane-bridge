@@ -59,7 +59,7 @@ public enum HostDirectoryListing {
                            folders: Array(volumes.map(\.path).prefix(max(0, limit))), truncated: volumes.count > limit)
         }
         let volumeRoots = volumes.map {
-            WorkspaceFileReader.Root(url: $0.standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL, label: "volume")
+            WorkspaceFileReader.Root(url: resolvedDirectory($0), label: "volume")
         }
         let roots = volumeRoots + WorkspaceFileReader.allowedRoots(workspace: nil, homeDirectory: homeDirectory, temporaryDirectories: temporaryDirectories)
         let target: URL
@@ -68,7 +68,7 @@ public enum HostDirectoryListing {
         } else {
             let normalized = HostPath.normalized(requested)
             guard HostPath.isAbsolute(normalized) else { throw Failure.outsideRoots }
-            target = URL(fileURLWithPath: normalized, isDirectory: true).standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
+            target = resolvedDirectory(URL(fileURLWithPath: normalized, isDirectory: true))
         }
         let components = target.pathComponents
         guard let root = roots.first(where: { $0.url.pathComponents == components || WorkspaceFileReader.contains($0.url, components) }) else {
@@ -91,5 +91,15 @@ public enum HostDirectoryListing {
                        rootLabel: root.label,
                        folders: Array(names.prefix(max(0, limit))),
                        truncated: names.count > limit)
+    }
+
+    private static func resolvedDirectory(_ url: URL) -> URL {
+        #if os(Windows)
+        // Foundation standardizes C:/ into a relative C: and resolves it below the process's
+        // working directory. A logical drive root is already absolute and needs its final slash.
+        let path = Array(HostPath.normalized(url.path))
+        if path.count == 3, path[0].isASCII, path[0].isLetter, path[1] == ":", path[2] == "/" { return url }
+        #endif
+        return url.standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
     }
 }
