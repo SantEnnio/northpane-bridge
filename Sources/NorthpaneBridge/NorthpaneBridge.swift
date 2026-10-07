@@ -1838,14 +1838,12 @@ private actor BridgeHostContext {
                 pathHits: results.hits.map { .init(path: $0.path, relativePath: $0.relativePath, rootLabel: $0.rootLabel, isDirectory: $0.isDirectory, byteCount: $0.byteCount, modified: $0.modified) },
                 truncated: results.truncated)
         case .listHostDirectories:
-            // Folder names only, inside the home and temporary directories: where a new Workspace
-            // could open. Nothing is read and no file is named.
+            // Directory names only. Windows also offers its logical drives for Workspace creation.
             do {
                 let listing = try HostDirectoryListing.list(path: command.path ?? "")
-                let separator = listing.directory.hasSuffix("/") || listing.directory.hasSuffix("\\") ? "" : "/"
                 return .init(commandID: command.commandID, relativePath: listing.directory, mediaType: listing.parent ?? "",
-                             pathHits: listing.folders.map {
-                                 .init(path: listing.directory + separator + $0, relativePath: $0, rootLabel: listing.rootLabel,
+                             pathHits: zip(listing.folders, listing.folderPaths).map { name, path in
+                                 .init(path: path, relativePath: name, rootLabel: listing.rootLabel,
                                        isDirectory: true, byteCount: 0, modified: nil)
                              },
                              truncated: listing.truncated)

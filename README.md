@@ -138,3 +138,12 @@ and that no frozen revision changed.
 
 MIT, see [LICENSE](LICENSE). Third-party components and their licenses are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### Windows directory roots (schema 22)
+
+`LIST_HOST_DIRECTORIES` accepts `/` as the virtual computer on Windows and returns
+logical drive roots as absolute directory hits. Listing a drive root returns `/`
+as its parent. The virtual computer is a navigation target, never a Workspace
+working directory. Empty paths still list the user's home. The command remains
+directory-only and requires `terminalControl`; hidden directories and credential
+stores remain excluded. File reads and path searches retain their existing roots.

@@ -1,12 +1,15 @@
 import Foundation
 
 public enum NorthpaneRelease {
-    public static let version = "1.0.13"
+    public static let version = "1.0.14"
 }
 
 public enum BridgeProtocol {
     public static let major = 1
-    public static let schemaRevision = 21
+    public static let schemaRevision = 22
+    /// LIST_HOST_DIRECTORIES on Windows accepts `/` as the virtual computer and returns logical
+    /// drive paths. Drive roots return `/` as their parent. It is not a Workspace working directory.
+    public static let windowsDirectoryRootsRevision = 22
     public static let maximumFrameBytes = 1_048_576
     /// The first revision whose sessions authenticate the Client device by a proof of its key
     /// (`HandshakeAccepted.deviceChallenge`, `DeviceSessionProof`) rather than by the identity it
