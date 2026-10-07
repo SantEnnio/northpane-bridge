@@ -79,11 +79,11 @@ public enum HostDirectoryListing {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory), isDirectory.boolValue else { throw Failure.notADirectory }
 
-        let entries = (try? FileManager.default.contentsOfDirectory(at: target, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
+        let entries = (try? FileManager.default.contentsOfDirectory(at: target, includingPropertiesForKeys: HostFileMetadata.directoryEntryKeys, options: [.skipsHiddenFiles])) ?? []
         let names = entries.compactMap { entry -> String? in
             let name = entry.lastPathComponent
             guard !name.hasPrefix("."), !WorkspaceFileReader.isRefusedComponent(name),
-                  (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { return nil }
+                  HostFileMetadata.read(entry, includingDetails: false)?.isDirectory == true else { return nil }
             return name
         }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
         return Listing(directory: target.path,

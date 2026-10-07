@@ -131,16 +131,16 @@ public enum WorkspacePathSearch {
                 do {
                     entries = try FileManager.default.contentsOfDirectory(
                         at: directory,
-                        includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                        includingPropertiesForKeys: HostFileMetadata.directoryEntryKeys,
                         options: [])
                 } catch { continue }   // an unreadable directory is simply not part of the answer
 
                 for entry in entries {
                     let name = entry.lastPathComponent
                     if WorkspaceFileReader.isRefusedComponent(name) { continue }
-                    guard let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { continue }
-                    if values.isSymbolicLink == true { continue }
-                    let isDirectory = values.isDirectory == true
+                    guard let values = HostFileMetadata.read(entry, includingDetails: false) else { continue }
+                    if values.isSymbolicLink { continue }
+                    let isDirectory = values.isDirectory
                     let relative = parentRelative.isEmpty ? name : parentRelative + "/" + name
                     // Northpane's own secure material sits at a known place below home.
                     if root.label == "home", relative.lowercased().hasPrefix(".local/share/northpane") { continue }
@@ -149,10 +149,10 @@ public enum WorkspacePathSearch {
                     if let rank = rank(name: name, relativePath: relative, terms: terms, depth: depth + 1,
                                        isDirectory: isDirectory, rootPriority: priority(of: root.label)) {
                         if scored.count < collectionCeiling {
-                            let detail = try? entry.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                            let detail = HostFileMetadata.read(entry)
                             scored.append((Hit(path: entry.path, relativePath: relative, rootLabel: root.label,
-                                               isDirectory: isDirectory, byteCount: detail?.fileSize ?? 0,
-                                               modified: detail?.contentModificationDate), rank))
+                                               isDirectory: isDirectory, byteCount: detail?.byteCount ?? 0,
+                                               modified: detail?.modified), rank))
                         } else {
                             truncated = true
                         }

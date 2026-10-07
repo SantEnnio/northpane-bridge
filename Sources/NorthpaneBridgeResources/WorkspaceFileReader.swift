@@ -72,14 +72,14 @@ public enum WorkspaceFileReader {
         var walked = root
         for component in relativeComponents {
             walked = walked.appending(path: component)
-            if (try? walked.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true { throw WorkspaceFileError.symbolicLink }
+            if HostFileMetadata.read(walked, includingDetails: false)?.isSymbolicLink == true { throw WorkspaceFileError.symbolicLink }
         }
-        if (try? candidate.standardizedFileURL.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true { throw WorkspaceFileError.symbolicLink }
-        guard let values = try? resolved.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .fileSizeKey]) else { throw WorkspaceFileError.notFound }
-        guard values.isRegularFile == true else { throw values.isDirectory == true ? WorkspaceFileError.notAFile : WorkspaceFileError.notFound }
+        if HostFileMetadata.read(candidate.standardizedFileURL, includingDetails: false)?.isSymbolicLink == true { throw WorkspaceFileError.symbolicLink }
+        guard let values = HostFileMetadata.read(resolved) else { throw WorkspaceFileError.notFound }
+        guard values.isRegularFile else { throw values.isDirectory ? WorkspaceFileError.notAFile : WorkspaceFileError.notFound }
         let relativePath = relativeComponents.joined(separator: "/")
         let kind = kind(for: relativePath)
-        guard let size = values.fileSize, size <= kind.limit else { throw WorkspaceFileError.tooLarge }
+        guard values.byteCount <= kind.limit else { throw WorkspaceFileError.tooLarge }
         let data: Data
         do { data = try Data(contentsOf: resolved) } catch { throw WorkspaceFileError.notFound }
         guard data.count <= kind.limit else { throw WorkspaceFileError.tooLarge }
