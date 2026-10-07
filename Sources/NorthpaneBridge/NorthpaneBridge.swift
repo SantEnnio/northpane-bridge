@@ -12,6 +12,7 @@ import NorthpaneBridgeCore
 import NorthpaneBridgeResources
 import NorthpaneConnection
 import NorthpaneHerdrIntegration
+import NorthpaneHostRuntime
 import NorthpaneProtocol
 import NorthpaneSecurity
 
@@ -162,17 +163,17 @@ struct NorthpaneBridge {
         let context = try await BridgeHostContext()
         while !Task.isCancelled {
             let (events, continuation) = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
-            let subscription = HerdrEventSubscription(sessionName: sessionName)
-            let agentSubscriptions = AgentStatusSubscriptions()
+            var subscription: (any RuntimeChanges)?
             var poller: Task<Void, Never>?
             do {
-                try await subscription.start(onEvent: { continuation.yield(true) }, onClose: { _ in continuation.yield(false); continuation.finish() })
+                let changes = try await context.makeChanges(sessionName: sessionName)
+                subscription = changes
+                try await changes.start(onEvent: { continuation.yield(true) }, onClose: { _ in continuation.yield(false); continuation.finish() })
                 let first = try await context.currentSnapshot(sessionName: sessionName)
                 var tracker = AttentionTransitionTracker()
                 _ = tracker.observe(first.panes)
                 var pending: [String: WirePane] = [:]
-                await agentSubscriptions.update(paneIDs: first.panes.map(\.id).sorted(), sessionName: sessionName,
-                    onEvent: { continuation.yield(true) })
+                await changes.updatePaneIDs(first.panes.map(\.id))
                 poller = Task {
                     while !Task.isCancelled {
                         try? await Task.sleep(for: .seconds(30))
@@ -188,14 +189,12 @@ struct NorthpaneBridge {
                         let blocked = Set(snapshot.panes.filter { $0.agentStatus == "blocked" }.map(\.id))
                         pending = pending.filter { blocked.contains($0.key) }
                         await context.publishAttention(Array(pending.values), in: snapshot)
-                        await agentSubscriptions.update(paneIDs: snapshot.panes.map(\.id).sorted(), sessionName: sessionName,
-                            onEvent: { continuation.yield(true) })
+                        await changes.updatePaneIDs(snapshot.panes.map(\.id))
                     } catch { break }
                 }
             } catch { /* Herdr may be stopped: retry from a full snapshot. */ }
             poller?.cancel()
-            subscription.stop()
-            await agentSubscriptions.stop()
+            subscription?.stop()
             continuation.finish()
             try? await Task.sleep(for: .seconds(5))
         }
@@ -220,7 +219,7 @@ struct NorthpaneBridge {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }()
 
-    private static func serve(_ transport: any BridgeTransport, context: BridgeHostContext) async throws {
+    static func serve(_ transport: any BridgeTransport, context: BridgeHostContext) async throws {
         let authority = context.authority
         let responder = BridgeSessionResponder(authority: authority, capabilities: Set(Capability.allCases),
             bridgeVersion: ProcessInfo.processInfo.environment["NORTHPANE_BRIDGE_VERSION"] ?? NorthpaneRelease.version,
@@ -238,13 +237,11 @@ struct NorthpaneBridge {
         /// The challenge waiting for its proof: one attempt per session.
         var pendingDeviceChallenge: Data?
         let observation = BridgeConnectionObservation()
-        var eventSubscription: HerdrEventSubscription?
-        let agentStatusSubscriptions = AgentStatusSubscriptions()
+        var eventSubscription: (any RuntimeChanges)?
         let terminalRegistry = TerminalRegistry()
         let previewTunnels = PreviewTunnelRegistry()
         defer {
             eventSubscription?.stop()
-            Task { await agentStatusSubscriptions.stop() }
             Task { await terminalRegistry.stopAll() }
             Task { await previewTunnels.stopAll() }
         }
@@ -282,7 +279,6 @@ struct NorthpaneBridge {
                 await observation.subscriptionClosed()
                 eventSubscription?.stop()
                 eventSubscription = nil
-                await agentStatusSubscriptions.stop()
                 authenticatedDevice = nil
                 identityProven = false
                 try await transport.send(Envelope(protocolMajor: request.protocolMajor, schemaRevision: request.schemaRevision, connectionID: request.connectionID, channelID: request.channelID, messageID: request.messageID, payload: .problem(Problem(code: "device_revoked", locus: .bridge, retry: .afterUserAction, recoveryAction: "pairDevice", phase: .trust))))
@@ -397,8 +393,10 @@ struct NorthpaneBridge {
                 }
                 eventSubscription?.stop()
                 await observation.begin(sessionName: observe.sessionName)
-                let subscription = HerdrEventSubscription(sessionName: observe.sessionName)
+                eventSubscription = nil
                 do {
+                    let subscription = try await context.makeChanges(sessionName: observe.sessionName)
+                    eventSubscription = subscription
                     try await subscription.start(
                         onEvent: {
                             Task {
@@ -419,20 +417,15 @@ struct NorthpaneBridge {
                             }
                         }
                     )
-                    eventSubscription = subscription
-                    // Agent status changes are per-pane subscriptions: keep one connection for the
-                    // current pane set and rebuild it whenever the snapshot's panes change.
+                    // The runtime adapter includes status changes for the observed Pane set.
                     let connectionID = request.connectionID, channelID = request.channelID, sessionName = observe.sessionName
                     await observation.setPaneObserver { paneIDs in
-                        await agentStatusSubscriptions.update(paneIDs: paneIDs, sessionName: sessionName, onEvent: {
-                            Task {
-                                await observation.receivedEvent(context: context, sessionName: sessionName, transport: transport, connectionID: connectionID, channelID: channelID)
-                            }
-                        })
+                        await subscription.updatePaneIDs(paneIDs)
                     }
                     await observation.watchActivity(context: context, sessionName: sessionName, transport: transport, connectionID: connectionID, channelID: channelID)
                 } catch {
-                    subscription.stop()
+                    eventSubscription?.stop()
+                    eventSubscription = nil
                     guard ProcessInfo.processInfo.environment["NORTHPANE_HERDR_EVENT_SOCKET_OPTIONAL"] == "1" else {
                         responsePayload = .problem(Problem(code: "herdr_event_subscription_failed", locus: .herdr, retry: .afterRefresh, recoveryAction: "restartHerdrOrRetry", phase: .events))
                         break
@@ -471,10 +464,9 @@ struct NorthpaneBridge {
                     break
                 }
                 let attachmentID = UUID()
-                let mode: HerdrTerminalSession.Mode = switch attach.mode { case .observe: .observe; case .control: .control; case .takeover: .takeover }
-                let session: HerdrTerminalSession
+                let session: any TerminalChannel
                 let observedSessionName = await observation.sessionName
-                do { session = try await context.makeTerminalSession(paneID: attach.paneID, sessionName: observedSessionName, mode: mode) }
+                do { session = try await context.makeTerminalSession(paneID: attach.paneID, sessionName: observedSessionName, mode: attach.mode) }
                 catch {
                     responsePayload = .problem(Problem(code: "herdr_unavailable", locus: .herdr, retry: .afterUserAction, recoveryAction: "installOrStartHerdr", phase: .discovery))
                     break
@@ -876,7 +868,6 @@ struct NorthpaneBridge {
                 await observation.subscriptionClosed()
                 eventSubscription?.stop()
                 eventSubscription = nil
-                await agentStatusSubscriptions.stop()
                 authenticatedDevice = nil
                 let receipt = WireMutationReceipt(commandID: mutation.commandID, outcome: .applied)
                 await context.remember(receipt)
@@ -1120,7 +1111,7 @@ private actor BridgeConnectionObservation {
     private func checkActivity(context: BridgeHostContext, sessionName: String?, transport: any BridgeTransport,
                                connectionID: ConnectionID, channelID: ChannelID) async {
         guard ready, let pushed = lastPushed else { return }
-        let current = await context.paneActivity(paneIDs: pushed.panes.map(\.id))
+        let current = await context.paneActivity(paneIDs: pushed.panes.map(\.id), sessionName: sessionName)
         let used = pushed.panes.contains { pane in
             guard let latest = current[pane.id] else { return false }
             return pane.lastActivityAt.map { latest > $0 } ?? true
@@ -1218,42 +1209,6 @@ private actor BridgeConnectionObservation {
     }
 }
 
-/// One Herdr connection subscribed to `pane.agent_status_changed` for every current pane. Rebuilt
-/// when the pane set changes; a refresh is requested right after, so a change that landed between
-/// the old and the new subscription is not lost. Missing sockets are tolerated (test harness).
-private actor AgentStatusSubscriptions {
-    private var current: HerdrEventSubscription?
-    private var paneIDs: [String] = []
-
-    func update(paneIDs: [String], sessionName: String?, onEvent: @escaping @Sendable () -> Void) async {
-        guard paneIDs != self.paneIDs || current == nil else { return }
-        current?.stop()
-        current = nil
-        self.paneIDs = paneIDs
-        guard !paneIDs.isEmpty else { return }
-        let subscription = HerdrEventSubscription(sessionName: sessionName, scope: .agentStatus(paneIDs: paneIDs))
-        do {
-            try await subscription.start(onEvent: onEvent, onClose: { [weak self] _ in Task { await self?.closed(subscription) } })
-            current = subscription
-            onEvent()
-        } catch {
-            subscription.stop()
-        }
-    }
-
-    private func closed(_ subscription: HerdrEventSubscription) {
-        guard current === subscription else { return }
-        current = nil
-        paneIDs = []
-    }
-
-    func stop() {
-        current?.stop()
-        current = nil
-        paneIDs = []
-    }
-}
-
 private struct BridgeSelfCheck: Codable {
     let protocolMajor: Int
     let schemaRevision: Int
@@ -1263,7 +1218,7 @@ private struct BridgeSelfCheck: Codable {
 
 private actor TerminalRegistry {
     struct Entry: Sendable {
-        let session: HerdrTerminalSession
+        let session: any TerminalChannel
         let mode: TerminalAttachMode
         /// The pane behind the attachment: a scroll has to know what it is scrolling.
         let paneID: String
@@ -1275,7 +1230,7 @@ private actor TerminalRegistry {
 
     private var entries: [UUID: Entry] = [:]
 
-    func add(_ session: HerdrTerminalSession, mode: TerminalAttachMode, id: UUID, paneID: String, columns: Int, rows: Int) {
+    func add(_ session: any TerminalChannel, mode: TerminalAttachMode, id: UUID, paneID: String, columns: Int, rows: Int) {
         entries[id] = Entry(session: session, mode: mode, paneID: paneID, columns: columns, rows: rows,
                             outputSequence: 0, acceptedInputSequence: -1)
     }
@@ -1303,7 +1258,7 @@ private actor TerminalRegistry {
         entries[id] = entry
     }
 
-    func remove(_ id: UUID) -> HerdrTerminalSession? { entries.removeValue(forKey: id)?.session }
+    func remove(_ id: UUID) -> (any TerminalChannel)? { entries.removeValue(forKey: id)?.session }
 
     func stopAll() {
         let sessions = entries.values.map(\.session)
@@ -1326,14 +1281,14 @@ private actor PreviewTunnelRegistry {
     }
 }
 
-private struct WorkspaceCreationResult: Sendable {
+struct WorkspaceCreationResult: Sendable {
     let workspaceID: String
     let paneID: String
     let agentStarted: Bool
     let agentStartFailed: Bool
 }
 
-private actor BridgeHostContext {
+actor BridgeHostContext {
     nonisolated let authority: PairingAuthority
     nonisolated let authorizationService: GitHubAuthorizationService
     private let pairingFile: URL
@@ -1355,23 +1310,23 @@ private actor BridgeHostContext {
     private var sentUploads = SentFileUploads()
     /// The agent CLIs found on this Host, each read through the session its installation holds.
     private let agentUsage: AgentUsageMonitor
-    private var runtime: HerdrRuntime?
-    /// One per Bridge process: it keeps the map of Panes to terminals between snapshots.
-    private let paneActivity = PaneActivityProbe()
+    private var runtimes: [String: any HostRuntime] = [:]
+    private let runtimeIncarnationID = UUID().uuidString
+    private let runtimeFactory: @Sendable (String?, String) throws -> any HostRuntime
 
-    /// When each Pane was last used, without asking Herdr: what the activity watch compares with
-    /// the snapshot last sent.
-    func paneActivity(paneIDs: [String]) -> [String: Date] {
-        paneActivity.lastActivity(paneIDs: paneIDs, now: Date())
+    func paneActivity(paneIDs: [String], sessionName: String?) async -> [String: Date] {
+        guard let runtime = runtimes[sessionName ?? ""] else { return [:] }
+        return await runtime.paneActivity(paneIDs: paneIDs)
     }
-    private var herdrServerProcess: Process?
-    private var herdrExecutable: URL?
-    private var cachedHerdrVersion: String?
     private var receipts: [UUID: (receipt: WireMutationReceipt, expiresAt: Date)] = [:]
 
-    init() async throws {
+    init(stateDirectory configuredStateDirectory: URL? = nil,
+         runtimeFactory: @escaping @Sendable (String?, String) throws -> any HostRuntime = {
+             try HerdrHostRuntime(sessionName: $0, incarnationID: $1)
+         }) async throws {
+        self.runtimeFactory = runtimeFactory
         let environment = ProcessInfo.processInfo.environment
-        let stateDirectory = environment["NORTHPANE_STATE_DIRECTORY"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let stateDirectory = configuredStateDirectory ?? environment["NORTHPANE_STATE_DIRECTORY"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".northpane", directoryHint: .isDirectory)
         self.stateDirectory = stateDirectory
         agentUsage = AgentUsageMonitor(discover: {
@@ -1410,33 +1365,29 @@ private actor BridgeHostContext {
             secureStore: KeychainSecureMaterialStore(service: "it.ambiens.northpane.github"))
     }
 
+    private func hostRuntime(sessionName: String?) throws -> any HostRuntime {
+        let key = sessionName ?? ""
+        if let runtime = runtimes[key] { return runtime }
+        let runtime = try runtimeFactory(key.isEmpty ? nil : key, runtimeIncarnationID)
+        runtimes[key] = runtime
+        return runtime
+    }
+
     func detectedHerdrVersion() async -> String {
-        if let cachedHerdrVersion { return cachedHerdrVersion }
+        // Discovery remains available when no executable can be resolved.
         if let configured = ProcessInfo.processInfo.environment["NORTHPANE_HERDR_VERSION"], !configured.isEmpty {
-            cachedHerdrVersion = configured
             return configured
         }
-        do {
-            let runner = try HerdrProcessRunner()
-            herdrExecutable = runner.executableURL
-            let output = String(decoding: try await runner.run(arguments: ["--version"]), as: UTF8.self)
-            let match = output.range(of: #"[0-9]+\.[0-9]+\.[0-9]+"#, options: .regularExpression)
-            let version = match.map { String(output[$0]) } ?? "unknown"
-            cachedHerdrVersion = version
-            return version
-        } catch {
-            cachedHerdrVersion = "unavailable"
-            return "unavailable"
-        }
+        guard let runtime = try? hostRuntime(sessionName: nil) else { return "unavailable" }
+        return await runtime.descriptor.version
     }
 
     func currentSnapshot(sessionName: String?) async throws -> WireRuntimeSnapshot {
-        if runtime == nil {
-            let runner = try HerdrProcessRunner()
-            herdrExecutable = runner.executableURL
-            runtime = HerdrRuntime(runner: runner, activity: paneActivity)
-        }
-        return try await runtime!.currentSnapshot(hostID: authority.identity.hostID, sessionName: sessionName)
+        try await hostRuntime(sessionName: sessionName).currentSnapshot(hostID: authority.identity.hostID)
+    }
+
+    func makeChanges(sessionName: String?) async throws -> any RuntimeChanges {
+        try await hostRuntime(sessionName: sessionName).changes()
     }
 
     func createWorkspace(label: String, workingDirectory: String, agentKind: WorkspaceAgentKind, sessionName: String?) async throws -> WorkspaceCreationResult {
@@ -1448,25 +1399,20 @@ private actor BridgeHostContext {
         }
         var isDirectory: ObjCBool = false
         if FileManager.default.fileExists(atPath: workingDirectory, isDirectory: &isDirectory) {
-            guard isDirectory.boolValue else { throw HerdrRuntimeError.commandFailed("the workspace path is not a directory") }
+            guard isDirectory.boolValue else { throw HostRuntimeError.invalidWorkingDirectory("the workspace path is not a directory") }
         } else {
             try FileManager.default.createDirectory(atPath: workingDirectory, withIntermediateDirectories: true)
         }
-        if runtime == nil {
-            let runner = try HerdrProcessRunner()
-            herdrExecutable = runner.executableURL
-            runtime = HerdrRuntime(runner: runner, activity: paneActivity)
-        }
-        let created = try await runtime!.createWorkspace(label: label, workingDirectory: workingDirectory,
-                                                         sessionName: sessionName)
+        let runtime = try hostRuntime(sessionName: sessionName)
+        let created = try await runtime.createWorkspace(label: label, workingDirectory: workingDirectory, environment: [:])
         guard agentKind != .shell else {
             return WorkspaceCreationResult(workspaceID: created.workspaceID, paneID: created.paneID,
                                            agentStarted: false, agentStartFailed: false)
         }
         do {
-            try await runtime!.startAgent(agentKind, executableURL: detected!.url,
-                                          name: HerdrAgentNaming.name(workspaceID: created.workspaceID),
-                                          paneID: created.paneID, sessionName: sessionName)
+            try await runtime.startAgent(agentKind, executableURL: detected!.url,
+                                          name: RuntimeAgentNaming.name(resourceID: created.workspaceID),
+                                          paneID: created.paneID)
             return WorkspaceCreationResult(workspaceID: created.workspaceID, paneID: created.paneID,
                                            agentStarted: true, agentStartFailed: false)
         } catch {
@@ -1480,7 +1426,7 @@ private actor BridgeHostContext {
     /// Workspace already is.
     func createPane(workspaceID: String, workingDirectory: String, agentKind: WorkspaceAgentKind, sessionName: String?) async throws -> WorkspaceCreationResult {
         try await openPane(workingDirectory: workingDirectory, agentKind: agentKind, sessionName: sessionName) { runtime in
-            try await runtime.createTab(workspaceID: workspaceID, workingDirectory: workingDirectory, sessionName: sessionName)
+            try await runtime.createTab(workspaceID: workspaceID, workingDirectory: workingDirectory)
         }
     }
 
@@ -1489,12 +1435,12 @@ private actor BridgeHostContext {
     func splitPane(paneID: String, direction: PaneSplitDirection, workingDirectory: String, agentKind: WorkspaceAgentKind,
                    sessionName: String?) async throws -> WorkspaceCreationResult {
         try await openPane(workingDirectory: workingDirectory, agentKind: agentKind, sessionName: sessionName) { runtime in
-            try await runtime.splitPane(paneID: paneID, direction: direction, workingDirectory: workingDirectory, sessionName: sessionName)
+            try await runtime.splitPane(paneID: paneID, direction: direction, workingDirectory: workingDirectory)
         }
     }
 
     private func openPane(workingDirectory: String, agentKind: WorkspaceAgentKind, sessionName: String?,
-                          using open: (HerdrRuntime) async throws -> CreatedWorkspace) async throws -> WorkspaceCreationResult {
+                          using open: (any HostRuntime) async throws -> CreatedPane) async throws -> WorkspaceCreationResult {
         let resolver = AgentExecutableResolver()
         let detected: DetectedAgentExecutable? = if agentKind == .shell {
             nil
@@ -1503,22 +1449,18 @@ private actor BridgeHostContext {
         }
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: workingDirectory, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw HerdrRuntimeError.commandFailed("the Workspace's directory is not there")
+            throw HostRuntimeError.invalidWorkingDirectory("the Workspace's directory is not there")
         }
-        if runtime == nil {
-            let runner = try HerdrProcessRunner()
-            herdrExecutable = runner.executableURL
-            runtime = HerdrRuntime(runner: runner, activity: paneActivity)
-        }
-        let created = try await open(runtime!)
+        let runtime = try hostRuntime(sessionName: sessionName)
+        let created = try await open(runtime)
         guard agentKind != .shell else {
             return WorkspaceCreationResult(workspaceID: created.workspaceID, paneID: created.paneID, agentStarted: false, agentStartFailed: false)
         }
         do {
             // Named after the Pane, not the Workspace: a Workspace can now hold several agents.
-            try await runtime!.startAgent(agentKind, executableURL: detected!.url,
-                                          name: HerdrAgentNaming.name(workspaceID: created.paneID),
-                                          paneID: created.paneID, sessionName: sessionName)
+            try await runtime.startAgent(agentKind, executableURL: detected!.url,
+                                          name: RuntimeAgentNaming.name(resourceID: created.paneID),
+                                          paneID: created.paneID)
             return WorkspaceCreationResult(workspaceID: created.workspaceID, paneID: created.paneID, agentStarted: true, agentStartFailed: false)
         } catch {
             return WorkspaceCreationResult(workspaceID: created.workspaceID, paneID: created.paneID, agentStarted: false, agentStartFailed: true)
@@ -1526,72 +1468,24 @@ private actor BridgeHostContext {
     }
 
     func renameWorkspace(workspaceID: String, label: String, sessionName: String?) async throws {
-        guard runtime != nil else { throw HerdrRuntimeError.executableUnavailable }
-        try await runtime!.renameWorkspace(workspaceID: workspaceID, label: label, sessionName: sessionName)
+        try await hostRuntime(sessionName: sessionName).renameWorkspace(workspaceID: workspaceID, label: label)
     }
 
     func closeWorkspace(workspaceID: String, sessionName: String?) async throws {
-        if runtime == nil {
-            let runner = try HerdrProcessRunner()
-            herdrExecutable = runner.executableURL
-            runtime = HerdrRuntime(runner: runner, activity: paneActivity)
-        }
-        try await runtime!.closeWorkspace(workspaceID: workspaceID, sessionName: sessionName)
+        try await hostRuntime(sessionName: sessionName).closeWorkspace(workspaceID: workspaceID)
     }
 
-    func startHerdr(sessionName: String?) throws {
-        if herdrServerProcess?.isRunning == true { return }
-        if let sessionName {
-            guard sessionName.range(of: #"^[A-Za-z0-9._-]{1,64}$"#, options: .regularExpression) != nil else {
-                throw HerdrRuntimeError.commandFailed("invalid session name")
-            }
-        }
-        let executable = try herdrExecutable ?? HerdrProcessRunner().executableURL
-        herdrExecutable = executable
-        let arguments = (sessionName.map { ["--session", $0] } ?? []) + ["server"]
-        let process = Process()
-        #if os(Windows)
-        // A Windows Host reached over SSH ends everything its session started, and the Bridge is
-        // that session: a Herdr server started as a child of it — directly, through `start`, or
-        // through Start-Process — dies with the connection, and the next connection finds no server
-        // again (measured on a real Windows Host on 2026-09-18). A process the WMI service creates
-        // belongs to no session and outlives it, which is what the Operator's own Herdr needs.
-        guard !executable.path.contains("'"), !executable.path.contains("\"") else {
-            throw HerdrRuntimeError.commandFailed("the path to herdr cannot be quoted safely")
-        }
-        let command = ([executable.path] + arguments).joined(separator: "\" \"")
-        process.executableURL = URL(fileURLWithPath: #"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"#)
-        process.arguments = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-            "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '\"\(command)\"' }; exit $r.ReturnValue"]
-        #else
-        process.executableURL = executable
-        process.arguments = arguments
-        #endif
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        #if os(Windows)
-        // The server belongs to WMI now, not to this process: what ran here was the request.
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { throw HerdrRuntimeError.commandFailed("herdr server could not be started") }
-        herdrServerProcess = nil
-        #else
-        herdrServerProcess = process
-        #endif
+    func startHerdr(sessionName: String?) async throws {
+        try await hostRuntime(sessionName: sessionName).ensureRunning()
     }
 
-    /// Lines Herdr is holding above a pane's viewport; zero when it holds none, and when Herdr has
-    /// not been reached at all — in which case the scroll goes to the Host as it always did.
     func hostScrollbackLines(paneID: String, sessionName: String?) async -> Int {
-        guard let runtime else { return 0 }
-        return await runtime.hostScrollbackLines(paneID: paneID, sessionName: sessionName)
+        guard let runtime = runtimes[sessionName ?? ""] else { return 0 }
+        return await runtime.hostScrollbackLines(paneID: paneID)
     }
 
-    func makeTerminalSession(paneID: String, sessionName: String?, mode: HerdrTerminalSession.Mode) throws -> HerdrTerminalSession {
-        let executable = try herdrExecutable ?? HerdrProcessRunner().executableURL
-        herdrExecutable = executable
-        return HerdrTerminalSession(executableURL: executable, paneID: paneID, sessionName: sessionName, mode: mode)
+    func makeTerminalSession(paneID: String, sessionName: String?, mode: TerminalAttachMode) async throws -> any TerminalChannel {
+        try await hostRuntime(sessionName: sessionName).makeTerminalChannel(paneID: paneID, mode: mode)
     }
 
     /// Takes in what another Bridge process wrote to the pairing file since this one read it. A file

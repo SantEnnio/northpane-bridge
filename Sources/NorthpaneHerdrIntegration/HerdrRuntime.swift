@@ -1,5 +1,6 @@
 import Foundation
 import NorthpaneProtocol
+import NorthpaneHostRuntime
 
 public enum HerdrRuntimeError: Error, Equatable, Sendable {
     case executableUnavailable
@@ -10,14 +11,7 @@ public enum HerdrRuntimeError: Error, Equatable, Sendable {
     case sessionNotRunning
 }
 
-public struct CreatedWorkspace: Equatable, Sendable {
-    public let workspaceID: String
-    public let paneID: String
-    public init(workspaceID: String, paneID: String) {
-        self.workspaceID = workspaceID
-        self.paneID = paneID
-    }
-}
+public typealias CreatedWorkspace = CreatedPane
 
 public protocol HerdrCommandRunning: Sendable {
     func run(arguments: [String]) async throws -> Data
@@ -340,8 +334,7 @@ public extension WorkspaceAgentKind {
 
 public enum HerdrAgentNaming {
     public static func name(workspaceID: String) -> String {
-        let body = workspaceID.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }
-        return String(("northpane-" + (body.isEmpty ? "agent" : body)).prefix(32))
+        RuntimeAgentNaming.name(resourceID: workspaceID)
     }
 }
 
