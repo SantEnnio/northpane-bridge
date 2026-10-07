@@ -1,0 +1,8 @@
+diff --git a/Sources/SwiftTerm/Pty.swift b/Sources/SwiftTerm/Pty.swift
+--- a/Sources/SwiftTerm/Pty.swift
++++ b/Sources/SwiftTerm/Pty.swift
+@@ -132,3 +132,3 @@
+-#if os(macOS)
++#if os(macOS) || canImport(Musl)
+         return ioctl(masterPtyDescriptor, TIOCSWINSZ, &windowSize)
+ #else

@@ -30,6 +30,14 @@ portable `Terminal` is used directly; Northpane does not use `LocalProcess` or
 Mac; none of that UI is Northpane product source or used by the Bridge. On Linux
 and Windows its manifest excludes the Apple UI directories.
 
+The Static Linux SDK uses Musl rather than Glibc. The 1.15 engine imports Glibc
+unconditionally in `KittyGraphics.swift`. `build-static-linux.sh` applies the
+small patches in `Patches/` through `prepare-swiftterm-musl.sh`.
+The helper checks the exact revision and the full input-file SHA-256 and is
+idempotent for the second architecture. Unknown source files fail the build;
+The patches change libc import selection and ioctl request typing, not terminal behavior. Direct
+musl builds must run that helper first.
+
 The checked 1.20.0 manifest includes `SwiftTermBuildInfoPlugin` and does not
 provide a portable render snapshot. Current main requires newer tools and has
 additional graphics dependencies. Its `TerminalRenderSnapshot` exposes wraps

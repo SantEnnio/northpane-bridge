@@ -3,8 +3,10 @@ import Foundation
 import NorthpanePTY
 #if os(macOS)
 import Darwin
-#else
+#elseif canImport(Glibc)
 import Glibc
+#elseif canImport(Musl)
+import Musl
 #endif
 
 public enum PTYError: Error, Equatable, Sendable {

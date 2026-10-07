@@ -20,6 +20,7 @@ case "$architecture" in
 esac
 sdk="$architecture-swift-linux-musl"
 
+sh "$repository_root/Scripts/prepare-swiftterm-musl.sh"
 swift build --package-path "$repository_root" -c release --swift-sdk "$sdk" --product northpane-bridge
 binary="$(swift build --package-path "$repository_root" -c release --swift-sdk "$sdk" --show-bin-path)/northpane-bridge"
 

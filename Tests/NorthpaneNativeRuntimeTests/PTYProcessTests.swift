@@ -4,8 +4,10 @@ import Testing
 @testable import NorthpaneNativeRuntime
 #if os(macOS)
 import Darwin
-#else
+#elseif canImport(Glibc)
 import Glibc
+#elseif canImport(Musl)
+import Musl
 #endif
 
 private final class Capture: @unchecked Sendable {
@@ -49,8 +51,11 @@ private func usage() -> (cpuSeconds: Double, peakRSSMiB: Double) {
 #if os(macOS)
     _ = getrusage(RUSAGE_SELF, &value)
     let rss = Double(value.ru_maxrss) / (1024 * 1024)
-#else
+#elseif canImport(Glibc)
     _ = getrusage(Int32(RUSAGE_SELF.rawValue), &value)
+    let rss = Double(value.ru_maxrss) / 1024
+#else
+    _ = getrusage(RUSAGE_SELF, &value)
     let rss = Double(value.ru_maxrss) / 1024
 #endif
     let cpu = Double(value.ru_utime.tv_sec + value.ru_stime.tv_sec) + Double(value.ru_utime.tv_usec + value.ru_stime.tv_usec) / 1_000_000

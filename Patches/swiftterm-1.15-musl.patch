@@ -1,0 +1,13 @@
+diff --git a/Sources/SwiftTerm/KittyGraphics.swift b/Sources/SwiftTerm/KittyGraphics.swift
+--- a/Sources/SwiftTerm/KittyGraphics.swift
++++ b/Sources/SwiftTerm/KittyGraphics.swift
+@@ -7,6 +7,8 @@
+ import Foundation
+-#if os(Linux)
++#if canImport(Glibc)
+ import Glibc
++#elseif canImport(Musl)
++import Musl
+ #elseif os(Windows)
+ import WinSDK
+ #else
