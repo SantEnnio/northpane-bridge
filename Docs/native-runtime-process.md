@@ -76,3 +76,19 @@ This is not yet a guarantee across logout, reboot or a live update with Pane
 processes. Linux service-manager/linger certification, the Workspace model,
 PTY ownership in this process and full terminal reattachment remain required
 before enabling automatic fallback on Hosts without Herdr.
+
+## Structural model
+
+An internal `NativeWorkspaceStore` implements the persistent graph independently
+of terminal parsing: Workspace `wN`, tab `wN:tM`, Pane `wN:pM`, binary right/down
+splits, active tabs/Panes and Workspace focus. Counters never reuse a closed
+identity. Mutations validate a copy, write `layout-v1.json` atomically and only
+then publish the new graph/revision; failure preserves both the prior graph
+and the next identity. Loading rejects invalid references, counters, versions,
+split ratios/depths and oversized files instead of resetting user data.
+
+Snapshots read the graph under one lock. They advertise no capabilities or
+agents and mark process status unknown: this is shape storage, not evidence of
+a running shell. The file carries no environment, terminal bytes, input or
+agent credentials. The store must be owned under the daemon's process lock;
+RPC integration, live metadata and PTY ownership are still forthcoming.
