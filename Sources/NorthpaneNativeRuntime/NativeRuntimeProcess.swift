@@ -141,6 +141,8 @@ public final class NativeRuntimeServer: @unchecked Sendable {
         }
     }
 
+    /// Blocks the calling thread until stopped. Async callers must use a
+    /// dedicated thread, rather than occupy Swift's cooperative executor.
     public func run() throws {
         while !stateLock.withLock({ stopping }) {
             let fd = np_runtime_accept(listener, 250)

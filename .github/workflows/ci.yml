@@ -19,6 +19,7 @@ jobs:
       - name: Generated protocol source matches the schema
         run: Scripts/check-protobuf.sh
       - name: Test
+        timeout-minutes: 15
         run: swift test
       - name: Bridge self-check
         run: swift run northpane-bridge self-check --json
@@ -56,6 +57,7 @@ jobs:
       - name: Build products and tests
         run: swift build --build-tests
       - name: Test
+        timeout-minutes: 15
         run: swift test --skip-build
       - name: Bridge self-check
         run: .build/debug/northpane-bridge self-check --json
@@ -92,6 +94,7 @@ jobs:
       - name: Build products and tests
         run: swift build --build-tests
       - name: Test
+        timeout-minutes: 15
         run: swift test --skip-build
       - name: Bridge self-check
         run: .build\debug\northpane-bridge.exe self-check --json

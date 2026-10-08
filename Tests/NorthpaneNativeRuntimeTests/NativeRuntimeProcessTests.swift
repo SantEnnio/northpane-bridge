@@ -19,12 +19,21 @@ import Musl
     private func withServer(_ body: (URL, NativeRuntimeServer) async throws -> Void) async throws {
         let directory = temporary()
         let server = try NativeRuntimeServer(stateDirectory: directory, version: "test")
-        let run = Task.detached { try server.run() }
+        // run() owns a blocking accept loop. A detached Swift task still runs
+        // on the cooperative pool and starves async clients on small runners.
+        let completed = AsyncStream<Result<Void, any Error>>.makeStream()
+        Thread.detachNewThread {
+            do { try server.run(); completed.continuation.yield(.success(())) }
+            catch { completed.continuation.yield(.failure(error)) }
+            completed.continuation.finish()
+        }
+        var completion = completed.stream.makeAsyncIterator()
         do {
             try await body(directory, server)
-            server.stop(); try await run.value
+            server.stop()
+            if let result = await completion.next() { try result.get() }
         } catch {
-            server.stop(); _ = try? await run.value
+            server.stop(); _ = await completion.next()
             try? FileManager.default.removeItem(at: directory)
             throw error
         }
