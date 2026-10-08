@@ -174,3 +174,16 @@ re-read as snapshots, not appended deltas, so compaction and repeated reads do
 not accumulate duplicate items. Conversation contents are not persisted or logged
 by the Bridge. The optional live Codex test is opt-in; ordinary tests use synthetic
 content only.
+
+Schema 24 adds optional automatic Pane resolution. The Herdr adapter reads
+`pane get` for a native `agent_session` ID; it never selects by cwd, title or
+list order. When no native reference exists, an explicit Operator selection may
+be remembered on the Host after a successful read. Encrypted records contain only
+session ID, endpoint and timestamp, scoped to the Pane's terminal and all
+foreground process IDs plus their OS birth times. Records survive independent
+Bridge connections, expire after 30 days and do not survive process/PID reuse.
+Native references take precedence; context/process changes during a read discard
+the result. macOS and Linux provide birth proofs; other platforms cannot persist
+a manual association without one. In-agent session switching without a native
+reference is not certified: the official integration is needed for that continuity.
+Missing bindings return `paneNotLinked`, never an arbitrary folder history.

@@ -292,6 +292,7 @@ public actor NorthpaneBridgeClient {
     /// schema revision 23 and the terminalControl grant; never sends input to the agent.
     public func readAgentConversation(_ reading: AgentConversationRequest, paneID: String, incarnationID: String) async throws -> AgentConversationReading {
         guard let accepted, accepted.schemaRevision >= 23 else { throw Problem.incompatibleProtocol }
+        guard accepted.schemaRevision >= 24 || (reading.resolvePaneSession != true && reading.associatePaneSession != true) else { throw Problem.incompatibleProtocol }
         let result = try await performResourceCommand(.init(kind: .readAgentConversation,
             body: JSONEncoder().encode(reading), paneID: paneID, query: incarnationID), channelID: ChannelID())
         guard result.body.count <= 768 * 1_024 else { throw Problem.malformedFrame }

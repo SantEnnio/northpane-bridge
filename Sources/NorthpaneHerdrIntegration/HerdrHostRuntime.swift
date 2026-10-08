@@ -87,6 +87,36 @@ public actor HerdrHostRuntime: HostRuntime {
         try await runtime.currentSnapshot(hostID: hostID, sessionName: sessionName)
     }
 
+    public func conversationIdentity(paneID: String) async throws -> RuntimeConversationIdentity? {
+        let prefix = sessionName.map { ["--session", $0] } ?? []
+        let data = try await runner.run(arguments: prefix + ["pane", "get", paneID])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = root["result"] as? [String: Any], let pane = result["pane"] as? [String: Any],
+              pane["pane_id"] as? String == paneID, let agent = pane["agent"] as? String else { return nil }
+        var sessionID: String?
+        if let reference = pane["agent_session"] as? [String: Any],
+           reference["agent"] as? String == agent, reference["kind"] as? String == "id",
+           let value = reference["value"] as? String, !value.isEmpty, value.utf8.count <= 512 {
+            sessionID = value
+        }
+        let processData = try? await runner.run(arguments: prefix + ["pane", "process-info", "--pane", paneID])
+        var proof: String?
+        if let processData,
+           let root = try? JSONSerialization.jsonObject(with: processData) as? [String: Any],
+           let result = root["result"] as? [String: Any], let info = result["process_info"] as? [String: Any],
+           info["pane_id"] as? String == paneID, let terminal = pane["terminal_id"] as? String,
+           let processes = info["foreground_processes"] as? [[String: Any]], !processes.isEmpty {
+            let identities = processes.compactMap { process -> String? in
+                guard let pid = process["pid"] as? Int32 else { return nil }
+                return ProcessBirth.proof(pid: pid)
+            }
+            if identities.count == processes.count {
+                proof = terminal + ":" + identities.sorted().joined(separator: ",")
+            }
+        }
+        return .init(agent: agent.lowercased(), sessionID: sessionID, processProof: proof)
+    }
+
     public func changes() -> any RuntimeChanges { HerdrRuntimeChanges(sessionName: sessionName) }
 
     public func createWorkspace(label: String, workingDirectory: String, environment: [String: String]) async throws -> CreatedPane {

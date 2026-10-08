@@ -135,3 +135,11 @@ used. A client orders and groups Panes by it; an older client ignores the field,
 sees an older revision has no time from the Host. Since Bridge 1.0.13 an observation also sends a
 snapshot when a Pane's time has moved since the last one sent, checked every 20 seconds: Herdr emits
 no event while a process writes without changing status.
+
+Revision 24 extends the JSON conversation request with opt-in Pane resolution and
+explicit process-bound association. Revision 23 requests keep their original
+manual, observation-only behavior. New clients gate both options on revision 24.
+The Host prefers the exact native session reference from its runtime. Explicit
+choices are encrypted identity/endpoint records keyed by runtime scope, Pane,
+agent and foreground process birth, revalidated before and after observation.
+No transcript is persisted and no agent lifecycle or prompt operation is added.

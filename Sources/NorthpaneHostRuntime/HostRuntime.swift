@@ -26,6 +26,17 @@ public enum HostRuntimeError: Error, Equatable, Sendable {
     case invalidWorkingDirectory(String)
 }
 
+/// A native session reference, or an opaque proof of the process occupying a Pane.
+/// A proof must include process birth, not just a reusable PID or Pane identifier.
+public struct RuntimeConversationIdentity: Equatable, Sendable {
+    public let agent: String
+    public let sessionID: String?
+    public let processProof: String?
+    public init(agent: String, sessionID: String? = nil, processProof: String? = nil) {
+        self.agent = agent; self.sessionID = sessionID; self.processProof = processProof
+    }
+}
+
 /// One runtime scope on a Host. Session selection belongs to adapter construction;
 /// every operation and subscription on this instance addresses that same scope.
 /// The adapter returns complete observations and reports changes only as invalidation
@@ -34,6 +45,7 @@ public protocol HostRuntime: Actor {
     var descriptor: RuntimeDescriptor { get async }
     func ensureRunning() async throws
     func currentSnapshot(hostID: HostID) async throws -> WireRuntimeSnapshot
+    func conversationIdentity(paneID: String) async throws -> RuntimeConversationIdentity?
     func changes() -> any RuntimeChanges
     func createWorkspace(label: String, workingDirectory: String, environment: [String: String]) async throws -> CreatedPane
     func createTab(workspaceID: String, workingDirectory: String) async throws -> CreatedPane
@@ -44,6 +56,10 @@ public protocol HostRuntime: Actor {
     func hostScrollbackLines(paneID: String) async -> Int
     func paneActivity(paneIDs: [String]) async -> [String: Date]
     func makeTerminalChannel(paneID: String, mode: TerminalAttachMode) throws -> any TerminalChannel
+}
+
+public extension HostRuntime {
+    func conversationIdentity(paneID: String) async throws -> RuntimeConversationIdentity? { nil }
 }
 
 /// Start before reading the first snapshot, so changes during that read are retained

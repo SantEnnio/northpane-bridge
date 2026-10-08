@@ -10,8 +10,15 @@ public struct AgentConversationRequest: Codable, Equatable, Sendable {
     public var sessionID: String
     /// Re-read the complete visible window on every poll. Never append incremental snapshots.
     public var limit: Int
-    public init(agent: Agent, endpoint: String = "", sessionID: String = "", limit: Int = 5) {
+    /// Revision 24: resolve the current Pane's native or process-bound session on the Host.
+    public var resolvePaneSession: Bool?
+    /// Revision 24: remember an explicit selection after a successful, revalidated read.
+    /// Stores identity/endpoint only; never writes to or resumes the agent session.
+    public var associatePaneSession: Bool?
+    public init(agent: Agent, endpoint: String = "", sessionID: String = "", limit: Int = 5,
+                resolvePaneSession: Bool? = nil, associatePaneSession: Bool? = nil) {
         self.agent = agent; self.endpoint = endpoint; self.sessionID = sessionID; self.limit = limit
+        self.resolvePaneSession = resolvePaneSession; self.associatePaneSession = associatePaneSession
     }
 }
 
@@ -47,6 +54,7 @@ public struct AgentConversationReading: Codable, Equatable, Sendable {
     public enum Problem: String, Codable, Sendable {
         case sourceUnavailable, unsupportedVersion, sdkMissing, sessionNotLoaded, invalidEndpoint
         case unauthorized, outputTooLarge, unreadable
+        case paneNotLinked
     }
     public var agent: AgentConversationRequest.Agent
     public var sessionID: String

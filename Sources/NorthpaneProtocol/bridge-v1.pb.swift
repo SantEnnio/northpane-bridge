@@ -600,6 +600,7 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
   case setAgentUsageConsent // = 21
 
   /// Revision 23: JSON AgentConversationRequest in body, bounded reading in result.body.
+  /// Revision 24: optional Pane resolution and explicit process-bound association in JSON.
   /// pane_id and query (runtime incarnation) bind observation to a current Pane.
   case readAgentConversation // = 22
   case UNRECOGNIZED(Int)

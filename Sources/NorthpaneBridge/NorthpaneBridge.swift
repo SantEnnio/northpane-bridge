@@ -1017,11 +1017,15 @@ struct NorthpaneBridge {
                               let pane = snapshot.panes.first(where: { $0.id == command.paneID }),
                               command.body.count < 8_192,
                               let readingRequest = try? JSONDecoder().decode(AgentConversationRequest.self, from: command.body),
-                              pane.agent?.lowercased() == readingRequest.agent.rawValue else { throw Problem.malformedFrame }
+                              pane.agent?.lowercased() == readingRequest.agent.rawValue,
+                              request.schemaRevision >= 24 || (readingRequest.resolvePaneSession != true && readingRequest.associatePaneSession != true),
+                              readingRequest.associatePaneSession != true || (readingRequest.resolvePaneSession != true && !readingRequest.sessionID.isEmpty) else { throw Problem.malformedFrame }
                         // Never await a Host API on the serial receive loop: terminal input and
                         // heartbeats continue while this observer waits for its bounded answer.
+                        let observedSessionName = await observation.sessionName
                         Task {
-                            let reading = await AgentConversationReader.read(readingRequest, directory: pane.cwd ?? "")
+                            let reading = await context.readConversation(readingRequest, paneID: pane.id,
+                                incarnationID: snapshot.incarnationID, sessionName: observedSessionName)
                             if let body = try? JSONEncoder().encode(reading) {
                                 try? await transport.send(Envelope(protocolMajor: request.protocolMajor, schemaRevision: request.schemaRevision,
                                     connectionID: request.connectionID, channelID: request.channelID, messageID: request.messageID,
@@ -1350,6 +1354,8 @@ actor BridgeHostContext {
     /// The version of the pairing file `authority` holds, to know when another process changed it.
     private var loadedPairingVersion: HostPairingFile.Version?
     private let stateDirectory: URL
+    private let conversationBindings: ConversationBindingStore
+    private let conversationReader: @Sendable (AgentConversationRequest, String) async -> AgentConversationReading
     private let previewStore: PreviewStore
     private let notificationRoutes: NotificationRouteRegistry
     private let notificationDeliveries: NotificationDeliveryLedger
@@ -1376,10 +1382,12 @@ actor BridgeHostContext {
     private var receipts: [UUID: (receipt: WireMutationReceipt, expiresAt: Date)] = [:]
 
     init(stateDirectory configuredStateDirectory: URL? = nil,
+         conversationReader: @escaping @Sendable (AgentConversationRequest, String) async -> AgentConversationReading = { await AgentConversationReader.read($0, directory: $1) },
          runtimeFactory: @escaping @Sendable (String?, String) throws -> any HostRuntime = {
              try HerdrHostRuntime(sessionName: $0, incarnationID: $1)
          }) async throws {
         self.runtimeFactory = runtimeFactory
+        self.conversationReader = conversationReader
         let environment = ProcessInfo.processInfo.environment
         let stateDirectory = configuredStateDirectory ?? environment["NORTHPANE_STATE_DIRECTORY"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".northpane", directoryHint: .isDirectory)
@@ -1398,6 +1406,8 @@ actor BridgeHostContext {
             at: stateDirectory.appending(path: "host-identity.json"),
             secureStore: identityStore
         )
+        let bindingKey = Data(SHA256.hash(data: stored.privateKey + Data("northpane-conversation-bindings-v1".utf8)))
+        conversationBindings = ConversationBindingStore(directory: stateDirectory.appending(path: "services/conversation-bindings-v1"), encryptionKey: bindingKey)
         pairingFile = stateDirectory.appending(path: "paired-devices.json")
         previewStore = try PreviewStore(fileURL: stateDirectory.appending(path: "resources/previews-v1.json"))
         let notificationKey = Data(SHA256.hash(data: stored.privateKey + Data("northpane-notification-routes-v1".utf8)))
@@ -1439,6 +1449,49 @@ actor BridgeHostContext {
 
     func currentSnapshot(sessionName: String?) async throws -> WireRuntimeSnapshot {
         try await hostRuntime(sessionName: sessionName).currentSnapshot(hostID: authority.identity.hostID)
+    }
+
+    func readConversation(_ original: AgentConversationRequest, paneID: String, incarnationID: String,
+                          sessionName: String?) async -> AgentConversationReading {
+        var request = original
+        do {
+            let runtime = try hostRuntime(sessionName: sessionName)
+            let before = try await runtime.currentSnapshot(hostID: authority.identity.hostID)
+            guard before.incarnationID == incarnationID,
+                  let pane = before.panes.first(where: { $0.id == paneID }),
+                  pane.agent?.lowercased() == request.agent.rawValue else { throw Problem.malformedFrame }
+            let scoped = sessionName ?? ""
+            let needsBinding = request.resolvePaneSession == true || request.associatePaneSession == true
+            let identity = needsBinding ? try await runtime.conversationIdentity(paneID: paneID) : nil
+            if request.resolvePaneSession == true {
+                guard let identity, identity.agent == request.agent.rawValue else {
+                    return .init(agent: request.agent, sessionID: original.sessionID, problem: .paneNotLinked)
+                }
+                if let native = identity.sessionID {
+                    request.sessionID = native
+                    if request.endpoint.isEmpty, let proof = identity.processProof,
+                       let saved = try conversationBindings.read(scope: scoped, paneID: paneID, agent: identity.agent, processProof: proof),
+                       saved.sessionID == native { request.endpoint = saved.endpoint }
+                } else if let proof = identity.processProof,
+                          let saved = try conversationBindings.read(scope: scoped, paneID: paneID, agent: identity.agent, processProof: proof) {
+                    request.sessionID = saved.sessionID; request.endpoint = saved.endpoint
+                } else { return .init(agent: request.agent, sessionID: original.sessionID, problem: .paneNotLinked) }
+            }
+            let reading = await conversationReader(request, pane.cwd ?? "")
+            if needsBinding {
+                let after = try await runtime.conversationIdentity(paneID: paneID)
+                guard after == identity else { return .init(agent: request.agent, sessionID: original.sessionID, problem: .paneNotLinked) }
+                if original.associatePaneSession == true, reading.problem == nil, !reading.sessionID.isEmpty {
+                    guard let identity, identity.agent == request.agent.rawValue, let proof = identity.processProof,
+                          identity.sessionID == nil || identity.sessionID == reading.sessionID else {
+                        return .init(agent: request.agent, sessionID: original.sessionID, problem: .paneNotLinked)
+                    }
+                    try conversationBindings.save(.init(sessionID: reading.sessionID, endpoint: request.endpoint),
+                        scope: scoped, paneID: paneID, agent: identity.agent, processProof: proof)
+                }
+            }
+            return reading
+        } catch { return .init(agent: request.agent, sessionID: original.sessionID, problem: .sourceUnavailable) }
     }
 
     func makeChanges(sessionName: String?) async throws -> any RuntimeChanges {

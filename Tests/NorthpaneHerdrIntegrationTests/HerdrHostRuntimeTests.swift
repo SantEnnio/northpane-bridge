@@ -45,3 +45,35 @@ private actor ScopedHerdrRunner: HerdrCommandRunning {
         return Data(response.utf8)
     }
 }
+
+@Test func herdrConversationUsesOnlyExactPaneNativeIDAndKeepsScope() async throws {
+    let runner = ConversationHerdrRunner()
+    let runtime = HerdrHostRuntime(runner: runner, executableURL: URL(fileURLWithPath: "/unused/herdr"), sessionName: "scope", incarnationID: "inc")
+    #expect(try await runtime.conversationIdentity(paneID: "pane")?.sessionID == "native-id")
+    await runner.setReference(agent: "claude", kind: "id")
+    #expect(try await runtime.conversationIdentity(paneID: "pane")?.sessionID == nil)
+    await runner.setReference(agent: "codex", kind: "path")
+    #expect(try await runtime.conversationIdentity(paneID: "pane")?.sessionID == nil)
+    #expect(try await runtime.conversationIdentity(paneID: "other-pane") == nil)
+    #expect(await runner.calls.allSatisfy { Array($0.prefix(2)) == ["--session", "scope"] })
+}
+
+@Test func processBirthIsStableForTheLiveProcessAndRejectsUnknownPID() {
+    #if os(macOS) || os(Linux)
+    let pid = ProcessInfo.processInfo.processIdentifier
+    #expect(ProcessBirth.proof(pid: pid) != nil)
+    #expect(ProcessBirth.proof(pid: pid) == ProcessBirth.proof(pid: pid))
+    #endif
+    #expect(ProcessBirth.proof(pid: 0) == nil)
+    #expect(ProcessBirth.proof(pid: -1) == nil)
+}
+
+private actor ConversationHerdrRunner: HerdrCommandRunning {
+    private var agent = "codex", kind = "id"
+    private(set) var calls: [[String]] = []
+    func setReference(agent: String, kind: String) { self.agent = agent; self.kind = kind }
+    func run(arguments: [String]) -> Data {
+        calls.append(arguments)
+        return Data("{\"result\":{\"pane\":{\"pane_id\":\"pane\",\"agent\":\"codex\",\"agent_session\":{\"source\":\"herdr:codex\",\"agent\":\"\(agent)\",\"kind\":\"\(kind)\",\"value\":\"native-id\"}}}}".utf8)
+    }
+}

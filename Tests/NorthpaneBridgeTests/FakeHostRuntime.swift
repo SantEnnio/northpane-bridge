@@ -15,6 +15,9 @@ actor FakeHostRuntime: HostRuntime {
     private var nextPane = 1
     private var nextTab = 1
     private(set) var running = false
+    private var conversationReference: RuntimeConversationIdentity?
+    func setConversationReference(_ value: RuntimeConversationIdentity?) { conversationReference = value }
+    func conversationIdentity(paneID: String) -> RuntimeConversationIdentity? { conversationReference }
 
     func ensureRunning() { running = true }
 

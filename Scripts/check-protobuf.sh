@@ -70,6 +70,8 @@ revision_twenty_one_hash=$(shasum -a 256 "$repository_root/Protocol/compatibilit
 [ "$revision_twenty_one_hash" = "424d0f5a012f50bf092b4fb35a2dc9dabb5ce6cbae543a48deff3885c869eb8f" ]
 revision_twenty_two_hash=$(shasum -a 256 "$repository_root/Protocol/compatibility/bridge-v1-revision-22.proto" | awk '{print $1}')
 [ "$revision_twenty_two_hash" = "424d0f5a012f50bf092b4fb35a2dc9dabb5ce6cbae543a48deff3885c869eb8f" ]
-diff -u "$repository_root/Protocol/compatibility/bridge-v1-revision-23.proto" "$repository_root/Protocol/bridge-v1.proto"
+revision_twenty_three_hash=$(shasum -a 256 "$repository_root/Protocol/compatibility/bridge-v1-revision-23.proto" | awk '{print $1}')
+[ "$revision_twenty_three_hash" = "93189dc9f351a335c3d04af6d5ac4337831610b4dcdec62f6e35e30094a554f1" ]
+diff -u "$repository_root/Protocol/compatibility/bridge-v1-revision-24.proto" "$repository_root/Protocol/bridge-v1.proto"
 
-echo "Generated Protobuf source matches revision 23; frozen revisions 1 to 22 are unchanged"
+echo "Generated Protobuf source matches revision 24; frozen revisions 1 to 23 are unchanged"
