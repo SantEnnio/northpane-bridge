@@ -18,6 +18,14 @@ protoc --proto_path "$repository_root/Protocol" \
   "$repository_root/Protocol/bridge-v1.proto"
 
 diff -u "$repository_root/Sources/NorthpaneProtocol/bridge-v1.pb.swift" "$temporary_directory/bridge-v1.pb.swift"
+protoc --proto_path "$repository_root/Protocol" \
+  --plugin="protoc-gen-swift=$plugin_directory/protoc-gen-swift" \
+  --swift_opt=FileNaming=DropPath \
+  --swift_opt=Visibility=Internal \
+  --swift_out="$temporary_directory" \
+  "$repository_root/Protocol/runtime-v1.proto"
+diff -u "$repository_root/Sources/NorthpaneNativeRuntime/runtime-v1.pb.swift" "$temporary_directory/runtime-v1.pb.swift"
+
 revision_one_hash=$(shasum -a 256 "$repository_root/Protocol/compatibility/bridge-v1-revision-1.proto" | awk '{print $1}')
 [ "$revision_one_hash" = "14bb043944d3d5a6d02db3952f6f6516d5682b712f336fd1605d7d0653eee417" ]
 revision_two_hash=$(shasum -a 256 "$repository_root/Protocol/compatibility/bridge-v1-revision-2.proto" | awk '{print $1}')

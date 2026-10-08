@@ -1,0 +1,28 @@
+syntax = "proto3";
+package northpane.runtime.v1;
+
+// User-local IPC only. Independent of the public Client/Bridge schema.
+// Each message is preceded by a four-byte unsigned big-endian length.
+message Request {
+  uint64 id = 1;
+  oneof operation {
+    Hello hello = 2;
+    Ping ping = 3;
+  }
+}
+message Hello { uint32 revision = 1; }
+message Ping {}
+message Response {
+  uint64 id = 1;
+  oneof outcome {
+    Ready ready = 2;
+    Failure failure = 3;
+  }
+}
+message Ready {
+  uint32 revision = 1;
+  string incarnation = 2;
+  string version = 3;
+  int64 process_id = 4;
+}
+message Failure { string code = 1; }

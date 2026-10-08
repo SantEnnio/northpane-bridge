@@ -13,6 +13,7 @@ import NorthpaneBridgeResources
 import NorthpaneConnection
 import NorthpaneHerdrIntegration
 import NorthpaneHostRuntime
+import NorthpaneNativeRuntime
 import NorthpaneProtocol
 import NorthpaneSecurity
 
@@ -106,6 +107,43 @@ struct NorthpaneBridge {
                 FileHandle.standardError.write(Data(startupFailure(error).utf8))
                 Foundation.exit(1)
             }
+        case ["runtime", "--status"], ["runtime", "--ensure"]:
+            #if os(macOS) || os(Linux)
+            do {
+                let directory = ProcessInfo.processInfo.environment["NORTHPANE_STATE_DIRECTORY"]
+                    .map { URL(fileURLWithPath: $0, isDirectory: true) }
+                    ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".northpane", directoryHint: .isDirectory)
+                let connection: NativeRuntimeConnection
+                if arguments.last == "--ensure", let executable = Bundle.main.executableURL {
+                    connection = try await NativeRuntimeLauncher.ensureRunning(stateDirectory: directory, executableURL: executable)
+                } else { connection = try await NativeRuntimeConnection.connect(stateDirectory: directory) }
+                defer { connection.close() }
+                let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+                FileHandle.standardOutput.write(try encoder.encode(connection.status))
+                FileHandle.standardOutput.write(Data("\n".utf8))
+            } catch {
+                FileHandle.standardError.write(Data("northpane-bridge: native runtime unavailable: \(error)\n".utf8))
+                Foundation.exit(1)
+            }
+            #else
+            Foundation.exit(1)
+            #endif
+        case ["runtime"]:
+            #if os(macOS) || os(Linux)
+            do {
+                let directory = ProcessInfo.processInfo.environment["NORTHPANE_STATE_DIRECTORY"]
+                    .map { URL(fileURLWithPath: $0, isDirectory: true) }
+                    ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".northpane", directoryHint: .isDirectory)
+                let server = try NativeRuntimeServer(stateDirectory: directory, version: NorthpaneRelease.version)
+                try await Task.detached { try server.run() }.value
+            } catch {
+                FileHandle.standardError.write(Data("northpane-bridge: native runtime unavailable: \(error)\n".utf8))
+                Foundation.exit(1)
+            }
+            #else
+            FileHandle.standardError.write(Data("northpane-bridge: native runtime is not available on this platform\n".utf8))
+            Foundation.exit(1)
+            #endif
         case ["watch"]:
             do { try await watch(sessionName: nil) }
             catch {
@@ -113,7 +151,7 @@ struct NorthpaneBridge {
                 Foundation.exit(1)
             }
         default:
-            print("Usage: northpane-bridge [--version | self-check --json | watch | serve --stdio | serve --local-stdio | serve --socket PATH | serve --private ADDRESS PORT --certificate CERT.pem --key KEY.pem]")
+            print("Usage: northpane-bridge [--version | self-check --json | watch | runtime [--status | --ensure] | serve --stdio | serve --local-stdio | serve --socket PATH | serve --private ADDRESS PORT --certificate CERT.pem --key KEY.pem]")
         }
     }
 
