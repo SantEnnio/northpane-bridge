@@ -209,5 +209,17 @@ import Musl
         #expect(first == second)
         #expect(try await runCLI(binary, directory: directory, argument: "--status") == first)
     }
+
+    @Test func serviceSetupNeverCompetesWithAnAlreadyHealthyOwner() async throws {
+        try await withServer { directory, server in
+            let managed = try await NativeRuntimeUserService.ensureRunning(stateDirectory: directory,
+                executableURL: URL(fileURLWithPath: "/missing/new-version"))
+            defer { managed.connection.close() }
+            #expect(managed.connection.status == server.status)
+            #expect(!managed.persistence.managedByUserService)
+            #expect(managed.persistence.survivesUserLogout == nil)
+            #expect(try await managed.connection.ping() == server.status)
+        }
+    }
 }
 #endif

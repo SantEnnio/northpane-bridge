@@ -52,7 +52,27 @@ revisions and malformed/oversized frames exercise the same interface. A UID
 policy check supplements real same-user kernel credential checks; the tests
 do not claim to have created an actual foreign-user process.
 
+`NativeRuntimeUserService` prepares launchd/systemd registration for the
+forthcoming native adapter. It reuses a healthy owner before touching service
+configuration, never bootouts/restarts an owner to apply an update, and keeps
+versioned installations on their `current` executable pointer. Linux attempts
+user linger and reports its verified state; macOS does not claim survival
+across full user logout from LaunchAgent registration alone. Missing service
+managers fall back to the detached launcher, with logout continuity unknown.
+This interface is not yet called by the production Bridge.
+
+The launchd opt-in test uses a unique certification label and temporary
+registration file, then removes that service. It checks launchd startup and
+automatic restart after SIGKILL, not live Pane continuity:
+
+```
+NORTHPANE_RUNTIME_SERVICE_CERT=1 swift test --jobs 2 --filter NativeRuntimeLaunchdTests
+```
+
+For the quoting/expansion rules used by the Linux unit, see the primary
+[systemd service documentation source](https://github.com/systemd/systemd/blob/main/man/systemd.service.xml).
+
 This is not yet a guarantee across logout, reboot or a live update with Pane
-processes. User-service registration (launchd/systemd and Linux linger), the
-Workspace model, PTY ownership in this process and full terminal reattachment
-remain required before enabling automatic fallback on Hosts without Herdr.
+processes. Linux service-manager/linger certification, the Workspace model,
+PTY ownership in this process and full terminal reattachment remain required
+before enabling automatic fallback on Hosts without Herdr.
