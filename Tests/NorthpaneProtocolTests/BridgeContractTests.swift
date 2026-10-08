@@ -195,3 +195,12 @@ import Testing
     #expect(decoded.panes[0].lastActivityAt == Date(timeIntervalSince1970: 1_791_288_000))
     #expect(decoded.panes[1].lastActivityAt == nil)
 }
+
+@Test func agentConversationRequestRoundTripsInRevision23() throws {
+    let reading = AgentConversationRequest(agent: .codex, sessionID: "session", limit: 5)
+    let command = ResourceCommand(kind: .readAgentConversation, body: try JSONEncoder().encode(reading), paneID: "pane", query: "incarnation")
+    let envelope = Envelope(connectionID: ConnectionID(), channelID: ChannelID(), payload: .resourceCommand(command))
+    let decoded = try FrameCodec.decode(FrameCodec.encode(envelope))
+    #expect(decoded.schemaRevision == 23)
+    #expect(decoded.payload == .resourceCommand(command))
+}

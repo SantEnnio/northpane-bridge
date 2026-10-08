@@ -48,8 +48,10 @@ final class AgentCLIConversation: @unchecked Sendable {
     private let output = Pipe()
     private var buffer = Data()
     private let deadline: Date
+    private let maximumBytes: Int
 
-    init(executable: URL, arguments: [String], environment: [String: String] = [:], timeout: TimeInterval) throws {
+    init(executable: URL, arguments: [String], environment: [String: String] = [:], timeout: TimeInterval, maximumBytes: Int = 8 * 1_024 * 1_024) throws {
+        self.maximumBytes = maximumBytes
         deadline = Date().addingTimeInterval(timeout)
         process.executableURL = executable
         process.arguments = arguments
@@ -75,6 +77,22 @@ final class AgentCLIConversation: @unchecked Sendable {
         try input.fileHandleForWriting.write(contentsOf: line)
     }
 
+    func sendBytes(_ bytes: Data) throws {
+        guard process.isRunning else { throw AgentUsageFailure.unreachable }
+        try input.fileHandleForWriting.write(contentsOf: bytes)
+    }
+
+    func readBytes(_ count: Int) -> Data? {
+        guard count >= 0, count <= maximumBytes else { return nil }
+        while buffer.count < count {
+            guard let chunk = nextChunk(), buffer.count + chunk.count <= maximumBytes else { return nil }
+            buffer.append(chunk)
+        }
+        let result = Data(buffer.prefix(count))
+        buffer.removeFirst(count)
+        return result
+    }
+
     /// The next line, or nil once the child closed its output or the deadline stopped it.
     func nextLine() -> Data? {
         while true {
@@ -87,6 +105,7 @@ final class AgentCLIConversation: @unchecked Sendable {
                 defer { buffer = Data() }
                 return buffer.isEmpty ? nil : buffer
             }
+            guard buffer.count + chunk.count <= maximumBytes else { return nil }
             buffer.append(chunk)
         }
     }

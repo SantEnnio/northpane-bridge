@@ -147,3 +147,30 @@ as its parent. The virtual computer is a navigation target, never a Workspace
 working directory. Empty paths still list the user's home. The command remains
 directory-only and requires `terminalControl`; hidden directories and credential
 stores remain excluded. File reads and path searches retain their existing roots.
+
+## Read-only agent conversations (schema 23)
+
+An explicitly selected Pane may request an observation of an explicitly selected
+agent session. This needs the terminal-control grant: messages and tool results
+can contain workspace files. The request binds the Pane to the observed runtime
+incarnation; reads run outside the serial connection loop and at most two run
+at once in a Bridge process. JSON readings are bounded below the wire frame limit.
+
+On macOS/Linux, Codex uses only `app-server proxy` to the **existing** Unix socket
+and WebSocket transport, initializes an observer, then calls `thread/list`,
+`thread/loaded/list`, `thread/read` and `thread/turns/list`. Only a loaded thread
+can be selected. It never starts a server, resumes a thread, subscribes to actions
+or answers server requests. Claude uses `listSessions`, `getSessionInfo` and
+`getSessionMessages` from the official Agent SDK 0.3.293, installed with Node.js
+18+ under `~/.northpane/integrations/claude-reader`. It reads CLI transcripts
+without invoking Claude; no diff is invented from Edit/Write inputs. OpenCode
+reads the existing V1 HTTP server of 1.18.x, accepting only numeric loopback
+origins with a port, refusing redirects, bounding response bytes and using Host
+environment authentication when present. No replacement server is launched.
+
+Windows adapters and OpenCode V2 are currently unavailable. Large content and
+missing capabilities remain explicit in the result. Newest history windows are
+re-read as snapshots, not appended deltas, so compaction and repeated reads do
+not accumulate duplicate items. Conversation contents are not persisted or logged
+by the Bridge. The optional live Codex test is opt-in; ordinary tests use synthetic
+content only.

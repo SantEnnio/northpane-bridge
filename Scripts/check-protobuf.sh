@@ -7,7 +7,7 @@ temporary_directory=$(mktemp -d)
 trap 'rm -rf "$temporary_directory"' EXIT
 
 swift package --package-path "$repository_root" resolve
-swift build --package-path "$checkout" -c release --product protoc-gen-swift >/dev/null
+swift build --package-path "$checkout" -c release --jobs 2 --product protoc-gen-swift >/dev/null
 plugin_directory=$(swift build --package-path "$checkout" -c release --show-bin-path)
 
 protoc --proto_path "$repository_root/Protocol" \
@@ -68,6 +68,8 @@ revision_twenty_hash=$(shasum -a 256 "$repository_root/Protocol/compatibility/br
 [ "$revision_twenty_hash" = "253c737a395f36287d9ee2e4ed453b1f9d0dcbae12975141a8baca249a891421" ]
 revision_twenty_one_hash=$(shasum -a 256 "$repository_root/Protocol/compatibility/bridge-v1-revision-21.proto" | awk '{print $1}')
 [ "$revision_twenty_one_hash" = "424d0f5a012f50bf092b4fb35a2dc9dabb5ce6cbae543a48deff3885c869eb8f" ]
-diff -u "$repository_root/Protocol/compatibility/bridge-v1-revision-22.proto" "$repository_root/Protocol/bridge-v1.proto"
+revision_twenty_two_hash=$(shasum -a 256 "$repository_root/Protocol/compatibility/bridge-v1-revision-22.proto" | awk '{print $1}')
+[ "$revision_twenty_two_hash" = "424d0f5a012f50bf092b4fb35a2dc9dabb5ce6cbae543a48deff3885c869eb8f" ]
+diff -u "$repository_root/Protocol/compatibility/bridge-v1-revision-23.proto" "$repository_root/Protocol/bridge-v1.proto"
 
-echo "Generated Protobuf source matches revision 22; frozen revisions 1 to 21 are unchanged"
+echo "Generated Protobuf source matches revision 23; frozen revisions 1 to 22 are unchanged"

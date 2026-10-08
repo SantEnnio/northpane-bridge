@@ -598,6 +598,10 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
   /// run. The Host keeps the choice, so it holds for every client, and withdrawing it stops the
   /// Readings and drops what was held. Answered like READ_AGENT_USAGE.
   case setAgentUsageConsent // = 21
+
+  /// Revision 23: JSON AgentConversationRequest in body, bounded reading in result.body.
+  /// pane_id and query (runtime incarnation) bind observation to a current Pane.
+  case readAgentConversation // = 22
   case UNRECOGNIZED(Int)
 
   init() {
@@ -628,6 +632,7 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
     case 19: self = .listHostDirectories
     case 20: self = .readAgentUsage
     case 21: self = .setAgentUsageConsent
+    case 22: self = .readAgentConversation
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -656,6 +661,7 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
     case .listHostDirectories: return 19
     case .readAgentUsage: return 20
     case .setAgentUsageConsent: return 21
+    case .readAgentConversation: return 22
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -684,6 +690,7 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
     .listHostDirectories,
     .readAgentUsage,
     .setAgentUsageConsent,
+    .readAgentConversation,
   ]
 
 }
@@ -2625,7 +2632,7 @@ nonisolated extension Northpane_Bridge_V1_TerminalScrollDirection: SwiftProtobuf
 }
 
 nonisolated extension Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf._ProtoNameProviding {
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RESOURCE_COMMAND_KIND_UNSPECIFIED\0\u{1}LIST_RESOURCES\0\u{1}REGISTER_PREVIEW\0\u{1}UPDATE_PREVIEW\0\u{1}CLOSE_PREVIEW\0\u{1}FETCH_PREVIEW_HTTP\0\u{1}PUBLISH_ARTIFACT\0\u{1}READ_ARTIFACT\0\u{1}DELETE_ARTIFACT\0\u{1}LIST_ARTIFACT_ENTRIES\0\u{1}STREAM_PREVIEW_HTTP\0\u{1}OPEN_PREVIEW_WEBSOCKET\0\u{1}SEND_PREVIEW_WEBSOCKET\0\u{1}CLOSE_PREVIEW_WEBSOCKET\0\u{1}READ_WORKSPACE_FILE\0\u{1}SEARCH_WORKSPACE_PATHS\0\u{1}LIST_SCREEN_CAPTURE_TARGETS\0\u{1}CAPTURE_SCREEN\0\u{1}STAGE_PASTED_FILE\0\u{1}LIST_HOST_DIRECTORIES\0\u{1}READ_AGENT_USAGE\0\u{1}SET_AGENT_USAGE_CONSENT\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RESOURCE_COMMAND_KIND_UNSPECIFIED\0\u{1}LIST_RESOURCES\0\u{1}REGISTER_PREVIEW\0\u{1}UPDATE_PREVIEW\0\u{1}CLOSE_PREVIEW\0\u{1}FETCH_PREVIEW_HTTP\0\u{1}PUBLISH_ARTIFACT\0\u{1}READ_ARTIFACT\0\u{1}DELETE_ARTIFACT\0\u{1}LIST_ARTIFACT_ENTRIES\0\u{1}STREAM_PREVIEW_HTTP\0\u{1}OPEN_PREVIEW_WEBSOCKET\0\u{1}SEND_PREVIEW_WEBSOCKET\0\u{1}CLOSE_PREVIEW_WEBSOCKET\0\u{1}READ_WORKSPACE_FILE\0\u{1}SEARCH_WORKSPACE_PATHS\0\u{1}LIST_SCREEN_CAPTURE_TARGETS\0\u{1}CAPTURE_SCREEN\0\u{1}STAGE_PASTED_FILE\0\u{1}LIST_HOST_DIRECTORIES\0\u{1}READ_AGENT_USAGE\0\u{1}SET_AGENT_USAGE_CONSENT\0\u{1}READ_AGENT_CONVERSATION\0")
 }
 
 nonisolated extension Northpane_Bridge_V1_ResourceKind: SwiftProtobuf._ProtoNameProviding {

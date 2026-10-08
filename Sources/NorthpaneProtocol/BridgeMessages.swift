@@ -333,6 +333,8 @@ public enum ResourceCommandKind: String, Codable, Sendable {
     /// Schema revision 18: how much of each agent subscription the Host user has consumed, as
     /// the agent CLIs on the Host report it. Answered at once from the last Reading held.
     case readAgentUsage
+    /// Schema revision 23: observe an explicitly selected session in the current Pane.
+    case readAgentConversation
     /// Schema revision 18: accept or withdraw, for this Host, what reading one agent implies.
     case setAgentUsageConsent
 }

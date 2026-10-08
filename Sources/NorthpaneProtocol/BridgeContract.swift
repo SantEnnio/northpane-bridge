@@ -6,7 +6,7 @@ public enum NorthpaneRelease {
 
 public enum BridgeProtocol {
     public static let major = 1
-    public static let schemaRevision = 22
+    public static let schemaRevision = 23
     /// LIST_HOST_DIRECTORIES on Windows accepts `/` as the virtual computer and returns logical
     /// drive paths. Drive roots return `/` as their parent. It is not a Workspace working directory.
     public static let windowsDirectoryRootsRevision = 22

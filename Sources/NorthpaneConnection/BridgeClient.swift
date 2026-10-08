@@ -288,10 +288,21 @@ public actor NorthpaneBridgeClient {
                      truncated: result.truncated)
     }
 
-    /// How much of each agent subscription the Host user has consumed, one entry per agent CLI
-    /// on the Host. The Host answers at once with the last Reading it holds; `isSettled` unset
-    /// says a fresher one is on its way and asking again a moment later collects it. Needs
-    /// schema revision 18; an older Bridge has no such command and is refused locally.
+    /// Observe an explicitly selected session in the current Pane incarnation. Needs
+    /// schema revision 23 and the terminalControl grant; never sends input to the agent.
+    public func readAgentConversation(_ reading: AgentConversationRequest, paneID: String, incarnationID: String) async throws -> AgentConversationReading {
+        guard let accepted, accepted.schemaRevision >= 23 else { throw Problem.incompatibleProtocol }
+        let result = try await performResourceCommand(.init(kind: .readAgentConversation,
+            body: JSONEncoder().encode(reading), paneID: paneID, query: incarnationID), channelID: ChannelID())
+        guard result.body.count <= 768 * 1_024 else { throw Problem.malformedFrame }
+        let response = try JSONDecoder().decode(AgentConversationReading.self, from: result.body)
+        guard response.agent == reading.agent, reading.sessionID.isEmpty || response.sessionID == reading.sessionID else { throw Problem.malformedFrame }
+        return response
+    }
+
+    /// How much of each agent subscription the Host user has consumed, one entry per CLI.
+    /// The Host answers with its last usage Reading; `isSettled` unset means a fresher
+    /// reading is on its way. Needs schema revision 18.
     public func readAgentUsage(channelID: ChannelID = ChannelID()) async throws -> HostAgentUsage {
         guard let accepted, accepted.schemaRevision >= 18 else { throw Problem.incompatibleProtocol }
         let result = try await performResourceCommand(.init(kind: .readAgentUsage), channelID: channelID)

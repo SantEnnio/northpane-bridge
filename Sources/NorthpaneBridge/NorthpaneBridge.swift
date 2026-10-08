@@ -989,7 +989,7 @@ struct NorthpaneBridge {
                 // needs the same grant as typing into it. Searching those same roots by name
                 // reveals strictly less than reading does, and the answer is normally pasted
                 // into the pane, so it is held to the same grant rather than a weaker one.
-                case .readWorkspaceFile, .searchWorkspacePaths: .terminalControl
+                case .readWorkspaceFile, .searchWorkspacePaths, .readAgentConversation: .terminalControl
                 // Folder names under roots the search already answers for: the same grant.
                 case .listHostDirectories: .terminalControl
                 // A screenshot shows whatever the Host's screen shows, which is more than any
@@ -1012,6 +1012,23 @@ struct NorthpaneBridge {
                         throw Problem.unauthorized
                     }
                     switch command.kind {
+                    case .readAgentConversation:
+                        guard request.schemaRevision >= 23, command.query == snapshot.incarnationID,
+                              let pane = snapshot.panes.first(where: { $0.id == command.paneID }),
+                              command.body.count < 8_192,
+                              let readingRequest = try? JSONDecoder().decode(AgentConversationRequest.self, from: command.body),
+                              pane.agent?.lowercased() == readingRequest.agent.rawValue else { throw Problem.malformedFrame }
+                        // Never await a Host API on the serial receive loop: terminal input and
+                        // heartbeats continue while this observer waits for its bounded answer.
+                        Task {
+                            let reading = await AgentConversationReader.read(readingRequest, directory: pane.cwd ?? "")
+                            if let body = try? JSONEncoder().encode(reading) {
+                                try? await transport.send(Envelope(protocolMajor: request.protocolMajor, schemaRevision: request.schemaRevision,
+                                    connectionID: request.connectionID, channelID: request.channelID, messageID: request.messageID,
+                                    payload: .resourceResult(.init(commandID: command.commandID, body: body, isFinal: true))))
+                            }
+                        }
+                        continue
                     case .streamPreviewHTTP:
                         let opened = try await context.openPreviewStream(command)
                         try await transport.send(Envelope(protocolMajor: request.protocolMajor, schemaRevision: request.schemaRevision, connectionID: request.connectionID, channelID: request.channelID, messageID: request.messageID, payload: .resourceResult(opened.initial)))
@@ -1628,6 +1645,8 @@ actor BridgeHostContext {
 
     func handleResource(_ command: ResourceCommand, transportKind: TransportKind, snapshot: WireRuntimeSnapshot) async throws -> ResourceResult {
         switch command.kind {
+        case .readAgentConversation:
+            throw resourceProblem("conversation_requires_bound_observation")
         case .listResources:
             var descriptors = await previewStore.list().map(previewDescriptor)
             for workspace in snapshot.workspaces {
