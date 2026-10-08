@@ -49,7 +49,11 @@ import Testing
 
 @Test func agentConversationRejectsRemoteEndpointsWithoutConnecting() async {
     let reading = await AgentConversationReader.read(.init(agent: .opencode, endpoint: "http://example.com:80"), directory: "")
+    #if os(macOS) || os(Linux)
     #expect(reading.problem == .invalidEndpoint)
+    #else
+    #expect(reading.problem == .unsupportedVersion)
+    #endif
 }
 
 @Test func agentConversationLiveCodexObservation() async throws {
