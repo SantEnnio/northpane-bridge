@@ -6,7 +6,8 @@ public enum NorthpaneRelease {
 
 public enum BridgeProtocol {
     public static let major = 1
-    public static let schemaRevision = 24
+    public static let schemaRevision = 25
+    public static let nativeRuntimeRevision = 25
     /// LIST_HOST_DIRECTORIES on Windows accepts `/` as the virtual computer and returns logical
     /// drive paths. Drive roots return `/` as their parent. It is not a Workspace working directory.
     public static let windowsDirectoryRootsRevision = 22
@@ -114,7 +115,7 @@ public enum CapabilityRegistry {
     }
 }
 
-public enum ProblemLocus: String, Codable, Sendable { case client, transport, bridge, herdr, managedService }
+public enum ProblemLocus: String, Codable, Sendable { case client, transport, bridge, herdr, managedService, runtime }
 public enum RetryClass: String, Codable, Sendable { case never, afterUserAction, afterReconnect, afterRefresh }
 public enum OperationPhase: String, Codable, Sendable { case handshake, trust, pairing, discovery, compatibility, snapshot, events, mutation, terminal, resource, service }
 
@@ -175,6 +176,10 @@ public struct HandshakeAccepted: Codable, Equatable, Sendable {
     public let hostSigningPublicKey: Data
     public let hostIdentitySignature: Data
     public let herdrVersion: String
+    /// nil identifies legacy Herdr handshakes predating revision 25.
+    public let runtimeKind: String?
+    public let runtimeVersion: String?
+    public var usesNativeRuntime: Bool { runtimeKind == "native" }
     /// Identifies the running Bridge binary, not its release (revision 9). Two Bridges that differ
     /// only in how something behaves report the same `bridgeVersion` and the same `schemaRevision`,
     /// so this is what tells them apart. Empty from a Bridge older than revision 9, which reads as
@@ -190,8 +195,8 @@ public struct HandshakeAccepted: Codable, Equatable, Sendable {
     /// signs them, inside a `DeviceSessionStatement`, to prove it holds its key in this session.
     /// Empty from a Bridge that predates revision 20, or when the two ends settled on an older one.
     public let deviceChallenge: Data
-    public init(protocolMajor: Int, schemaRevision: Int, hostID: HostID, capabilities: Set<Capability>, bridgeVersion: String = "development", maximumFrameBytes: Int = BridgeProtocol.maximumFrameBytes, hostSigningPublicKey: Data = Data(), hostIdentitySignature: Data = Data(), herdrVersion: String = "unknown", bridgeBuildID: String = "", hostPlatform: String = "", deviceChallenge: Data = Data()) {
-        self.protocolMajor = protocolMajor; self.schemaRevision = schemaRevision; self.hostID = hostID; self.capabilities = capabilities; self.bridgeVersion = bridgeVersion; self.maximumFrameBytes = maximumFrameBytes; self.hostSigningPublicKey = hostSigningPublicKey; self.hostIdentitySignature = hostIdentitySignature; self.herdrVersion = herdrVersion; self.bridgeBuildID = bridgeBuildID; self.hostPlatform = hostPlatform; self.deviceChallenge = deviceChallenge
+    public init(protocolMajor: Int, schemaRevision: Int, hostID: HostID, capabilities: Set<Capability>, bridgeVersion: String = "development", maximumFrameBytes: Int = BridgeProtocol.maximumFrameBytes, hostSigningPublicKey: Data = Data(), hostIdentitySignature: Data = Data(), herdrVersion: String = "unknown", bridgeBuildID: String = "", hostPlatform: String = "", deviceChallenge: Data = Data(), runtimeKind: String? = nil, runtimeVersion: String? = nil) {
+        self.protocolMajor = protocolMajor; self.schemaRevision = schemaRevision; self.hostID = hostID; self.capabilities = capabilities; self.bridgeVersion = bridgeVersion; self.maximumFrameBytes = maximumFrameBytes; self.hostSigningPublicKey = hostSigningPublicKey; self.hostIdentitySignature = hostIdentitySignature; self.herdrVersion = herdrVersion; self.bridgeBuildID = bridgeBuildID; self.hostPlatform = hostPlatform; self.deviceChallenge = deviceChallenge; self.runtimeKind = runtimeKind; self.runtimeVersion = runtimeVersion
     }
 }
 

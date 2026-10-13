@@ -5,6 +5,37 @@ import NorthpaneHerdrIntegration
 import NorthpaneProtocol
 @testable import NorthpaneBridge
 
+@Suite struct RuntimeSelectionTests {
+    @Test func installedHerdrRemainsTheDefaultAndErrorsCannotTriggerSelectionAgain() throws {
+        let selected = try RuntimeSelection.resolve(environment: ["PATH": "/tools"], homeDirectory: "/home/operator",
+            nativeSupported: true, isExecutable: { $0 == "/tools/herdr" })
+        #expect(selected.kind == .herdr)
+        #expect(selected.herdrExecutable?.path == "/tools/herdr")
+    }
+    @Test func aMissingHerdrSelectsNativeOnlyOnSupportedHosts() throws {
+        #expect(try RuntimeSelection.resolve(environment: [:], homeDirectory: "/home/operator", nativeSupported: true,
+            isExecutable: { _ in false }).kind == .native)
+        #expect(throws: HerdrRuntimeError.executableUnavailable) {
+            try RuntimeSelection.resolve(environment: [:], homeDirectory: "/home/operator", nativeSupported: false,
+                isExecutable: { _ in false })
+        }
+    }
+    @Test func explicitChoicesAreHonoredAndInvalidValuesFail() throws {
+        #expect(try RuntimeSelection.resolve(environment: ["NORTHPANE_RUNTIME": "native"], homeDirectory: "/home/operator",
+            nativeSupported: true, isExecutable: { _ in true }).kind == .native)
+        #expect(throws: HerdrRuntimeError.executableUnavailable) {
+            try RuntimeSelection.resolve(environment: ["NORTHPANE_RUNTIME": "herdr"], homeDirectory: "/home/operator",
+                nativeSupported: true, isExecutable: { _ in false })
+        }
+        #expect(throws: NativeSelectionError.invalidOverride) {
+            try RuntimeSelection.resolve(environment: ["NORTHPANE_RUNTIME": "typo"], homeDirectory: "/home/operator")
+        }
+        #expect(throws: NativeSelectionError.unsupportedPlatform) {
+            try RuntimeSelection.resolve(environment: ["NORTHPANE_RUNTIME": "native"], homeDirectory: "/home/operator", nativeSupported: false)
+        }
+    }
+}
+
 @Test func runtimeDiscoveryRemainsAvailableWithoutAnExecutable() async throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: "northpane-runtime-test-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }

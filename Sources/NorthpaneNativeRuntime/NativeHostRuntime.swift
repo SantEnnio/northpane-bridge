@@ -43,6 +43,7 @@ public actor NativeHostRuntime: HostRuntime {
         return connection
     }
     public func currentSnapshot(hostID: HostID) async throws -> WireRuntimeSnapshot {
+        try await ensureRunning()
         guard hostID == self.hostID else { throw NativeRuntimeProcessError.invalidConfiguration }
         return try await current().currentSnapshot(hostID: hostID)
     }

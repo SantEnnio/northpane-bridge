@@ -51,6 +51,8 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
+      - name: Keep dependency resources in their upstream LF form
+        run: git config --global core.autocrlf false
       - uses: compnerd/gha-setup-swift@397094e75494a93fa8d81db0268dbc8f5d6cf7c6 # v0.4.1
         with:
           swift-version: swift-6.3.2-release
@@ -68,6 +70,10 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - uses: compnerd/gha-setup-swift@397094e75494a93fa8d81db0268dbc8f5d6cf7c6 # v0.4.1
+        with:
+          swift-version: swift-6.3.2-release
+          swift-build: swift-6.3.2-RELEASE
       - run: Scripts/package-macos.sh artifacts
       - name: The binary reports the tagged version
         run: gzip -dc artifacts/northpane-bridge-macos-universal.gz > "$RUNNER_TEMP/bridge" && chmod +x "$RUNNER_TEMP/bridge" && "$RUNNER_TEMP/bridge" --version | grep -F "northpane-bridge ${{ needs.version.outputs.version }} "

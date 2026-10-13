@@ -444,7 +444,8 @@ public actor NorthpaneBridgeClient {
             throw Problem.malformedFrame
         }
         let commandID = UUID()
-        let target = normalized.isEmpty ? "herdr:start" : "herdr:start:\(normalized)"
+        let prefix = accepted?.usesNativeRuntime == true ? "runtime:start" : "herdr:start"
+        let target = normalized.isEmpty ? prefix : "\(prefix):\(normalized)"
         let mutation = MutationRequest(commandID: commandID, clientDeviceID: deviceID, capability: .observeRuntime,
             targetID: target, expectedRevision: 0, deadline: deadline)
         let response = try await request(.mutation(mutation))

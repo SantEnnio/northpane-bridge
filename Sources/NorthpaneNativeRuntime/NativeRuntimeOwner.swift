@@ -287,10 +287,15 @@ final class NativeRuntimeOwner: @unchecked Sendable {
     }
 
     func scroll(connectionID: UUID, attachmentID: UUID, direction: TerminalScrollDirection, lines: Int) throws {
-        try queue.sync {
+        let mouse: (PTYProcess, Data)? = try queue.sync {
             let attachment = try attachment(connectionID: connectionID, id: attachmentID)
-            guard let pane = panes[attachment.paneID] else { throw NativeRuntimeOwnerError.processExited }
-            guard !pane.engine.terminal.isCurrentBufferAlternate else { return }
+            guard let pane = panes[attachment.paneID], pane.proof == attachment.processProof else { throw NativeRuntimeOwnerError.processExited }
+            if pane.engine.terminal.isCurrentBufferAlternate {
+                _ = try controlling(connectionID: connectionID, id: attachmentID)
+                guard let process = pane.process else { throw NativeRuntimeOwnerError.processExited }
+                let bytes = pane.engine.wheel(up: direction == .up, lines: lines)
+                return bytes.isEmpty ? nil : (process, bytes)
+            }
             let buffer = pane.engine.terminal.buffer
             let bottom = buffer.totalLinesTrimmed + buffer.yDisp
             let current = attachment.scrollAnchor ?? bottom
@@ -298,7 +303,9 @@ final class NativeRuntimeOwner: @unchecked Sendable {
             let next = min(bottom, max(buffer.totalLinesTrimmed, current + delta))
             attachment.scrollAnchor = next == bottom ? nil : next
             model.markRuntimeChange()
+            return nil
         }
+        if let mouse { try mouse.0.sendInput(mouse.1) }
     }
 
     func release(connectionID: UUID, attachmentID: UUID) throws {

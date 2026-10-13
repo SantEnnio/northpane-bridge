@@ -12,7 +12,6 @@ final class NativeTerminalEngine: TerminalDelegate {
     private(set) var cursorStyle = 1
     private(set) var applicationKeypad = false
     private(set) var privateModes: [Int: Bool] = [7: true, 25: true]
-    private(set) var standardModes: [Int: Bool] = [:]
     private var sequence = [UInt8]()
     private var parsingCSI = false
     private var inString = false
@@ -148,6 +147,14 @@ final class NativeTerminalEngine: TerminalDelegate {
         return Data(result.utf8)
     }
 
+    func wheel(up: Bool, lines: Int) -> Data {
+        for _ in 0..<min(max(lines, 1), 20) {
+            terminal.sendHostMouse(action: .wheel, button: up ? .wheelUp : .wheelDown,
+                modifiers: 0, col: terminal.cols / 2, row: terminal.rows / 2, pixelX: 0, pixelY: 0)
+        }
+        let bytes = replies; replies.removeAll(keepingCapacity: true); return bytes
+    }
+
     private func linkedGlyph(_ cell: RenderSnapshotCell, row: Int, column: Int, top: Int) -> String {
         let glyph = cell.text.isEmpty ? " " : cell.text
         guard cell.payloadID != nil,
@@ -192,7 +199,6 @@ final class NativeTerminalEngine: TerminalDelegate {
         if utf8Remaining > 0 {
             if (0x80...0xbf).contains(byte) {
                 utf8Remaining -= 1
-                // String payloads still need their raw UTF-8 bytes below.
                 if !inString { return }
             } else { utf8Remaining = 0 }
         } else if !inString && (0xc2...0xf4).contains(byte) {
@@ -212,7 +218,7 @@ final class NativeTerminalEngine: TerminalDelegate {
             case 61: applicationKeypad = true; sequence.removeAll()
             case 62: applicationKeypad = false; sequence.removeAll()
             case 99:
-                applicationKeypad = false; privateModes = [7: true, 25: true]; standardModes = [:]
+                applicationKeypad = false; privateModes = [7: true, 25: true]
                 sequence.removeAll()
             default: sequence.removeAll()
             }
@@ -226,14 +232,13 @@ final class NativeTerminalEngine: TerminalDelegate {
             let parameters = String(decoding: sequence.dropFirst(2).dropLast(), as: UTF8.self)
             let isPrivate = parameters.hasPrefix("?")
             for token in (isPrivate ? String(parameters.dropFirst()) : parameters).split(separator: ";") {
-                if let mode = Int(token) {
+                if let mode = Int(token), [1, 7, 9, 25, 1000, 1002, 1003, 1005, 1006, 1015, 1016, 2004].contains(mode) {
                     if isPrivate {
                         for group in [[9, 1000, 1002, 1003], [1005, 1006, 1015, 1016]] where group.contains(mode) {
                             for previous in group { privateModes.removeValue(forKey: previous) }
                         }
                         privateModes[mode] = byte == 104
                     }
-                    else { standardModes[mode] = byte == 104 }
                 }
             }
         }

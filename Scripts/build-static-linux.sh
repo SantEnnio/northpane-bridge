@@ -21,6 +21,7 @@ esac
 sdk="$architecture-swift-linux-musl"
 
 export SWIFTTERM_EXCLUDE_APPLE=1
+export NORTHPANE_STATIC_LINUX_BUILD=1
 sh "$repository_root/Scripts/prepare-swiftterm-musl.sh"
 swift build --package-path "$repository_root" -c release --swift-sdk "$sdk" --product northpane-bridge
 binary="$(swift build --package-path "$repository_root" -c release --swift-sdk "$sdk" --show-bin-path)/northpane-bridge"

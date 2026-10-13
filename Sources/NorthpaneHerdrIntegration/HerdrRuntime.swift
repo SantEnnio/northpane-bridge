@@ -40,7 +40,7 @@ public struct HerdrProcessRunner: HerdrCommandRunning {
     /// `%LOCALAPPDATA%\Programs\Herdr\bin` from install.ps1); the package managers' prefixes;
     /// then `PATH`. The order matches the remote SSH command's `PATH`, so the Bridge runs the
     /// same Herdr a login shell on the Host would.
-    static func resolveExecutable(
+    public static func resolveExecutable(
         environment: [String: String],
         homeDirectory: String,
         isExecutable: (String) -> Bool,
@@ -69,9 +69,9 @@ public struct HerdrProcessRunner: HerdrCommandRunning {
     }
 
     #if os(Windows)
-    static let isWindows = true
+    public static let isWindows = true
     #else
-    static let isWindows = false
+    public static let isWindows = false
     #endif
 
     public func run(arguments: [String]) async throws -> Data {

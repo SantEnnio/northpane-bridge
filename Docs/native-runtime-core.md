@@ -8,8 +8,8 @@ reloads the graph with a new incarnation; it does not claim to resurrect childre
 
 `NativeHostRuntime` implements the same narrow `HostRuntime` interface as the
 Herdr adapter. It is available on macOS and Linux. The Bridge's default selection
-still chooses Herdr until the runtime-selection and public-handshake integration
-lands. Windows preserves Herdr support; native ConPTY is a separate milestone.
+chooses an installed Herdr by default and otherwise the native owner. The
+revision 25 handshake reports that choice; native Hosts reject legacy Clients. Windows preserves Herdr support; native ConPTY is a separate milestone.
 
 The additive `workspace_model` and `terminal_frames` readiness flags distinguish
 older healthy owners. A newer Bridge never restarts an older owner to acquire
@@ -66,6 +66,10 @@ Graphics and real agent-UI certification remain outside these textual fixtures.
 The pinned upstream source supports Musl directly. The static-build helper verifies
 the revision and rejects local changes; historical 1.15 patches are not applied.
 `SWIFTTERM_EXCLUDE_APPLE=1` excludes Apple sources when cross-compiling from macOS.
+The CI/release macOS jobs use Swift 6.3.2 explicitly. Windows dependency checkouts
+retain upstream LF resources: the terminfo build-info generator requires that form.
+Linux Crypto C++ objects link their runtime explicitly (GNU libstdc++ or static-SDK
+libc++), including when the dependency graph has build-tool executables.
 
 Primary source: [pinned SwiftTerm render snapshot](https://github.com/migueldeicaza/SwiftTerm/blob/fe4fb45d5888ce33ff3788d6873870a73894a41b/Sources/SwiftTerm/Portable/TerminalRenderSnapshot.swift).
 

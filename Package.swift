@@ -1,5 +1,10 @@
 // swift-tools-version: 6.0
 import PackageDescription
+import Foundation
+
+// Crypto's C++ objects need an explicit runtime when the dependency graph has
+// build-tool executables. Static SDK builds use libc++, GNU/Linux uses libstdc++.
+let linuxCxxRuntime = ProcessInfo.processInfo.environment["NORTHPANE_STATIC_LINUX_BUILD"] == "1" ? "c++" : "stdc++"
 
 let package = Package(
     name: "northpane-bridge",
@@ -41,7 +46,7 @@ let package = Package(
             .target(name: "NorthpanePTY", condition: .when(platforms: [.macOS, .linux])),
         ]),
         .target(name: "NorthpaneHerdrIntegration", dependencies: ["NorthpaneProtocol", "NorthpaneProjection", "NorthpaneHostRuntime"]),
-        .target(name: "NorthpaneSecurity", dependencies: ["NorthpaneProtocol", .product(name: "Crypto", package: "swift-crypto")], linkerSettings: [.linkedFramework("Security", .when(platforms: [.iOS, .macOS]))]),
+        .target(name: "NorthpaneSecurity", dependencies: ["NorthpaneProtocol", .product(name: "Crypto", package: "swift-crypto")], linkerSettings: [.linkedFramework("Security", .when(platforms: [.iOS, .macOS])), .linkedLibrary(linuxCxxRuntime, .when(platforms: [.linux]))]),
         .target(name: "NorthpaneBridgeResources", dependencies: ["NorthpaneProtocol", "NorthpaneProjection", "NorthpaneSecurity", .product(name: "Crypto", package: "swift-crypto")]),
         .target(name: "NorthpaneConnection", dependencies: [
             "NorthpaneProtocol", "NorthpaneProjection", "NorthpaneSecurity",
@@ -76,7 +81,7 @@ let package = Package(
         .testTarget(name: "NorthpaneBridgeResourcesTests", dependencies: ["NorthpaneBridgeResources"]),
         .testTarget(name: "NorthpaneDiagnosticsTests", dependencies: ["NorthpaneDiagnostics"]),
         .testTarget(name: "NorthpaneConnectionTests", dependencies: [
-            "NorthpaneConnection", "NorthpaneSecurity", .product(name: "Crypto", package: "swift-crypto"),
+            "NorthpaneConnection", "NorthpaneSecurity", "NorthpaneNativeRuntime", .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "NIOCore", package: "swift-nio", condition: .when(platforms: [.macOS])),
             .product(name: "NIOPosix", package: "swift-nio", condition: .when(platforms: [.macOS])),
             .product(name: "NIOSSH", package: "swift-nio-ssh", condition: .when(platforms: [.macOS])),

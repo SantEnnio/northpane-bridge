@@ -143,3 +143,14 @@ The Host prefers the exact native session reference from its runtime. Explicit
 choices are encrypted identity/endpoint records keyed by runtime scope, Pane,
 agent and foreground process birth, revalidated before and after observation.
 No transcript is persisted and no agent lifecycle or prompt operation is added.
+
+
+Revision 25 adds the selected `runtime_kind` and `runtime_version` to the accepted
+handshake and a generic `RUNTIME` problem locus. Empty fields identify legacy Herdr.
+Herdr preserves negotiation with earlier Clients; a native Bridge requires revision
+25 so an old Client cannot mistake the native owner for an unavailable Herdr.
+The additive mutation target `runtime:start` starts the selected runtime;
+`herdr:start` remains compatible. Selection uses an installed Herdr by default,
+otherwise the native owner on macOS/Linux. `NORTHPANE_RUNTIME=herdr|native` overrides
+that choice. Runtime errors never trigger a switch. Native history remains on the
+Host with per-attachment paging; no Client scrollback capability is advertised.

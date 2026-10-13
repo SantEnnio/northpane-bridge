@@ -259,10 +259,14 @@ struct NorthpaneBridge {
 
     static func serve(_ transport: any BridgeTransport, context: BridgeHostContext) async throws {
         let authority = context.authority
+        let runtimeDescriptor = await context.detectedRuntimeDescriptor()
+        let nativeRuntime = runtimeDescriptor.kind == .native
+        let runtimeLocus: ProblemLocus = nativeRuntime ? .runtime : .herdr
+        let runtimePrefix = nativeRuntime ? "runtime" : "herdr"
         let responder = BridgeSessionResponder(authority: authority, capabilities: Set(Capability.allCases),
             bridgeVersion: ProcessInfo.processInfo.environment["NORTHPANE_BRIDGE_VERSION"] ?? NorthpaneRelease.version,
-            herdrVersion: await context.detectedHerdrVersion(),
-            bridgeBuildID: buildID)
+            herdrVersion: runtimeDescriptor.kind == .herdr ? runtimeDescriptor.version : "",
+            bridgeBuildID: buildID, runtimeKind: runtimeDescriptor.kind.rawValue, runtimeVersion: runtimeDescriptor.version)
         var authenticatedDevice: ClientDeviceID?
         var presentedDevice: ClientDeviceID?
         /// Whether `authenticatedDevice` proved its key in this session (revision 20, or a pairing
@@ -450,7 +454,7 @@ struct NorthpaneBridge {
                         onClose: { error in
                             Task {
                                 await observation.subscriptionClosed()
-                                let problem = Problem(code: "herdr_event_subscription_closed", locus: .herdr, retry: .afterRefresh, recoveryAction: "requestFullSnapshot", phase: .events)
+                                let problem = Problem(code: runtimePrefix + "_event_subscription_closed", locus: runtimeLocus, retry: .afterRefresh, recoveryAction: "requestFullSnapshot", phase: .events)
                                 try? await transport.send(Envelope(connectionID: request.connectionID, channelID: request.channelID, payload: .problem(problem)))
                             }
                         }
@@ -465,7 +469,7 @@ struct NorthpaneBridge {
                     eventSubscription?.stop()
                     eventSubscription = nil
                     guard ProcessInfo.processInfo.environment["NORTHPANE_HERDR_EVENT_SOCKET_OPTIONAL"] == "1" else {
-                        responsePayload = .problem(Problem(code: "herdr_event_subscription_failed", locus: .herdr, retry: .afterRefresh, recoveryAction: "restartHerdrOrRetry", phase: .events))
+                        responsePayload = .problem(Problem(code: runtimePrefix + "_event_subscription_failed", locus: runtimeLocus, retry: .afterRefresh, recoveryAction: nativeRuntime ? "startRuntimeOrRetry" : "restartHerdrOrRetry", phase: .events))
                         break
                     }
                 }
@@ -481,7 +485,7 @@ struct NorthpaneBridge {
                         channelID: request.channelID
                     )
                 } catch {
-                    responsePayload = .problem(Problem(code: "herdr_snapshot_failed", locus: .herdr, retry: .afterRefresh, recoveryAction: "startHerdrOrRetry", phase: .snapshot))
+                    responsePayload = .problem(Problem(code: runtimePrefix + "_snapshot_failed", locus: runtimeLocus, retry: .afterRefresh, recoveryAction: nativeRuntime ? "startRuntimeOrRetry" : "startHerdrOrRetry", phase: .snapshot))
                 }
             case let .terminalAttach(attach):
                 // A terminal attach needs the same Herdr instance and a pane that still exists;
@@ -506,7 +510,7 @@ struct NorthpaneBridge {
                 let observedSessionName = await observation.sessionName
                 do { session = try await context.makeTerminalSession(paneID: attach.paneID, sessionName: observedSessionName, mode: attach.mode) }
                 catch {
-                    responsePayload = .problem(Problem(code: "herdr_unavailable", locus: .herdr, retry: .afterUserAction, recoveryAction: "installOrStartHerdr", phase: .discovery))
+                    responsePayload = .problem(Problem(code: runtimePrefix + "_unavailable", locus: runtimeLocus, retry: .afterUserAction, recoveryAction: nativeRuntime ? "startRuntimeOrRetry" : "installOrStartHerdr", phase: .discovery))
                     break
                 }
                 await terminalRegistry.add(session, mode: attach.mode, id: attachmentID, paneID: attach.paneID,
@@ -529,13 +533,13 @@ struct NorthpaneBridge {
                             // A pane that genuinely closes is reported on the attach channel with `phase: .terminal`;
                             // the client releases only that attachment and keeps the connection.
                             guard await terminalRegistry.remove(attachmentID) != nil else { return }
-                            let problem = Problem(code: error == nil ? "terminal_closed" : "terminal_stream_failed", locus: .herdr, retry: .afterRefresh, recoveryAction: "reattachReadOnly", phase: .terminal)
+                            let problem = Problem(code: error == nil ? "terminal_closed" : "terminal_stream_failed", locus: runtimeLocus, retry: .afterRefresh, recoveryAction: "reattachReadOnly", phase: .terminal)
                             try? await transport.send(Envelope(connectionID: request.connectionID, channelID: request.channelID, payload: .problem(problem)))
                         }
                     })
                 } catch {
                     _ = await terminalRegistry.remove(attachmentID)
-                    try await transport.send(Envelope(protocolMajor: request.protocolMajor, schemaRevision: request.schemaRevision, connectionID: request.connectionID, channelID: request.channelID, messageID: request.messageID, payload: .problem(Problem(code: "terminal_attach_failed", locus: .herdr, retry: .afterRefresh, recoveryAction: "reattachReadOnly", phase: .terminal))))
+                    try await transport.send(Envelope(protocolMajor: request.protocolMajor, schemaRevision: request.schemaRevision, connectionID: request.connectionID, channelID: request.channelID, messageID: request.messageID, payload: .problem(Problem(code: "terminal_attach_failed", locus: runtimeLocus, retry: .afterRefresh, recoveryAction: "reattachReadOnly", phase: .terminal))))
                 }
                 continue
             case let .terminalInput(frame):
@@ -558,7 +562,7 @@ struct NorthpaneBridge {
                         await terminalRegistry.acceptInput(frame.sequence, for: frame.attachmentID)
                         responsePayload = .terminalAcknowledgement(.init(attachmentID: frame.attachmentID, acceptedThroughSequence: frame.sequence))
                     } catch {
-                        responsePayload = .problem(Problem(code: "terminal_input_failed", locus: .herdr, retry: .afterRefresh, recoveryAction: "reattachReadOnly", phase: .terminal))
+                        responsePayload = .problem(Problem(code: "terminal_input_failed", locus: runtimeLocus, retry: .afterRefresh, recoveryAction: "reattachReadOnly", phase: .terminal))
                     }
                 } else {
                     responsePayload = .problem(Problem(code: "terminal_input_gap", locus: .bridge, retry: .never, recoveryAction: "discardPendingInput", phase: .terminal))
@@ -579,7 +583,7 @@ struct NorthpaneBridge {
                     await terminalRegistry.setViewport(columns: resize.columns, rows: resize.rows, for: resize.attachmentID)
                     responsePayload = .heartbeat(Heartbeat())
                 }
-                catch { responsePayload = .problem(Problem(code: "terminal_resize_failed", locus: .herdr, retry: .afterRefresh, recoveryAction: "reattachReadOnly", phase: .terminal)) }
+                catch { responsePayload = .problem(Problem(code: "terminal_resize_failed", locus: runtimeLocus, retry: .afterRefresh, recoveryAction: "reattachReadOnly", phase: .terminal)) }
             case let .terminalScroll(scroll):
                 // A grant reduced in another process closes the attachment before it accepts more.
                 if let entry = await terminalRegistry.entry(scroll.attachmentID), entry.mode != .observe, !(await deviceMayControl()) {
@@ -589,7 +593,7 @@ struct NorthpaneBridge {
                 }
                 // Herdr streams a rendered viewport, so scrollback is paged on the Host. Only a control
                 // stream honours the command; observe streams silently ignore it, so require control.
-                guard let entry = await terminalRegistry.entry(scroll.attachmentID), entry.mode != .observe else {
+                guard let entry = await terminalRegistry.entry(scroll.attachmentID), nativeRuntime || entry.mode != .observe else {
                     responsePayload = .problem(Problem(code: "terminal_control_required", locus: .bridge, retry: .afterUserAction, recoveryAction: "acquireControl", phase: .terminal))
                     break
                 }
@@ -597,7 +601,7 @@ struct NorthpaneBridge {
                 // says it here: Herdr reports how many lines it is holding above each pane, and
                 // holding none is what an alternate-screen agent looks like. See TerminalScrollRouting.
                 let sessionName = await observation.sessionName
-                let routing = TerminalScrollRouting.choose(
+                let routing: TerminalScrollRouting = nativeRuntime ? .hostScrollback : TerminalScrollRouting.choose(
                     heldOnHost: await context.hostScrollbackLines(paneID: entry.paneID, sessionName: sessionName),
                     paneRunsAnAgent: await observation.snapshot?.panes.first { $0.id == entry.paneID }?.agent != nil)
                 do {
@@ -609,7 +613,7 @@ struct NorthpaneBridge {
                     }
                     responsePayload = .heartbeat(Heartbeat())
                 }
-                catch { responsePayload = .problem(Problem(code: "terminal_scroll_failed", locus: .herdr, retry: .afterRefresh, recoveryAction: "reattachReadOnly", phase: .terminal)) }
+                catch { responsePayload = .problem(Problem(code: "terminal_scroll_failed", locus: runtimeLocus, retry: .afterRefresh, recoveryAction: "reattachReadOnly", phase: .terminal)) }
             case let .terminalRelease(release):
                 guard let session = await terminalRegistry.remove(release.attachmentID) else {
                     responsePayload = .problem(Problem(code: "terminal_attachment_missing", locus: .bridge, retry: .afterRefresh, recoveryAction: "refreshSnapshot", phase: .terminal))
@@ -632,11 +636,12 @@ struct NorthpaneBridge {
                     responsePayload = .mutationReceipt(receipt)
                     break
                 }
-                if mutation.targetID == "herdr:start" || mutation.targetID.hasPrefix("herdr:start:") {
+                if mutation.targetID == "runtime:start" || mutation.targetID.hasPrefix("runtime:start:") || mutation.targetID == "herdr:start" || mutation.targetID.hasPrefix("herdr:start:") {
                     do {
                         guard mutation.capability == .observeRuntime else { throw Problem.unauthorized }
                         try await authority.authorize(deviceID: device, capability: .observeRuntime)
-                        let sessionName = mutation.targetID == "herdr:start" ? nil : String(mutation.targetID.dropFirst("herdr:start:".count))
+                        let prefix = mutation.targetID.hasPrefix("runtime:") ? "runtime:start" : "herdr:start"
+                        let sessionName = mutation.targetID == prefix ? nil : String(mutation.targetID.dropFirst(prefix.count + 1))
                         try await context.startHerdr(sessionName: sessionName)
                         await audit(category: "herdr", reference: "server", outcome: "applied", reason: "client-requested-start")
                         let receipt = WireMutationReceipt(commandID: mutation.commandID, outcome: .applied)
@@ -645,7 +650,7 @@ struct NorthpaneBridge {
                     } catch let problem as Problem {
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .rejected, problem: problem))
                     } catch {
-                        let problem = Problem(code: "herdr_start_failed", locus: .herdr, retry: .afterUserAction, recoveryAction: "openHerdrGuideOrRetry", phase: .discovery)
+                        let problem = Problem(code: runtimePrefix + "_start_failed", locus: runtimeLocus, retry: .afterUserAction, recoveryAction: nativeRuntime ? "startRuntimeOrRetry" : "openHerdrGuideOrRetry", phase: .discovery)
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied, problem: problem))
                     }
                     break
@@ -674,7 +679,7 @@ struct NorthpaneBridge {
                         await audit(category: "workspace", reference: created.workspaceID,
                                                  outcome: "applied", reason: created.agentStartFailed ? "client-requested-create-agent-failed" : "client-requested-create")
                         let launchProblem = created.agentStartFailed
-                            ? Problem(code: "workspace_agent_start_failed", locus: .herdr, retry: .afterUserAction,
+                            ? Problem(code: "workspace_agent_start_failed", locus: runtimeLocus, retry: .afterUserAction,
                                       recoveryAction: "openWorkspaceAndStartAgent", phase: .mutation)
                             : nil
                         let receipt = WireMutationReceipt(commandID: mutation.commandID, outcome: .applied,
@@ -686,12 +691,12 @@ struct NorthpaneBridge {
                     } catch let problem as Problem {
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .rejected, problem: problem))
                     } catch AgentExecutableResolutionError.unavailable {
-                        let problem = Problem(code: "workspace_agent_unavailable", locus: .herdr, retry: .afterUserAction,
+                        let problem = Problem(code: "workspace_agent_unavailable", locus: runtimeLocus, retry: .afterUserAction,
                                               recoveryAction: "installAgentOrChooseShell", phase: .mutation)
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied, problem: problem,
                                                                  workspaceAgentKind: mutation.workspaceAgentKind))
                     } catch {
-                        let problem = Problem(code: "workspace_create_failed", locus: .herdr, retry: .afterUserAction,
+                        let problem = Problem(code: "workspace_create_failed", locus: runtimeLocus, retry: .afterUserAction,
                                               recoveryAction: "reviewWorkspaceAndRetry", phase: .mutation)
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied, problem: problem))
                     }
@@ -713,7 +718,7 @@ struct NorthpaneBridge {
                         else { throw Problem.malformedFrame }
                         let snapshot = await observation.snapshot
                         guard let workspace = snapshot?.workspaces.first(where: { $0.id == workspaceID }) else {
-                            throw Problem(code: "workspace_not_found", locus: .herdr, retry: .afterRefresh,
+                            throw Problem(code: "workspace_not_found", locus: runtimeLocus, retry: .afterRefresh,
                                           recoveryAction: "refreshSnapshot", phase: .mutation)
                         }
                         // Where the Workspace works: its worktree, else where one of its Panes
@@ -732,7 +737,7 @@ struct NorthpaneBridge {
                         await audit(category: "pane", reference: created.paneID,
                                                  outcome: "applied", reason: created.agentStartFailed ? "client-requested-create-agent-failed" : "client-requested-create")
                         let launchProblem = created.agentStartFailed
-                            ? Problem(code: "workspace_agent_start_failed", locus: .herdr, retry: .afterUserAction,
+                            ? Problem(code: "workspace_agent_start_failed", locus: runtimeLocus, retry: .afterUserAction,
                                       recoveryAction: "openWorkspaceAndStartAgent", phase: .mutation)
                             : nil
                         let receipt = WireMutationReceipt(commandID: mutation.commandID, outcome: .applied,
@@ -744,12 +749,12 @@ struct NorthpaneBridge {
                     } catch let problem as Problem {
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .rejected, problem: problem))
                     } catch AgentExecutableResolutionError.unavailable {
-                        let problem = Problem(code: "workspace_agent_unavailable", locus: .herdr, retry: .afterUserAction,
+                        let problem = Problem(code: "workspace_agent_unavailable", locus: runtimeLocus, retry: .afterUserAction,
                                               recoveryAction: "installAgentOrChooseShell", phase: .mutation)
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied, problem: problem,
                                                                  workspaceAgentKind: mutation.workspaceAgentKind))
                     } catch {
-                        let problem = Problem(code: "pane_create_failed", locus: .herdr, retry: .afterRefresh,
+                        let problem = Problem(code: "pane_create_failed", locus: runtimeLocus, retry: .afterRefresh,
                                               recoveryAction: "refreshWorkspaceAndRetry", phase: .mutation)
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied, problem: problem))
                     }
@@ -769,7 +774,7 @@ struct NorthpaneBridge {
                         let paneID = parts[1]
                         let snapshot = await observation.snapshot
                         guard let pane = snapshot?.panes.first(where: { $0.id == paneID }) else {
-                            throw Problem(code: "pane_not_found", locus: .herdr, retry: .afterRefresh,
+                            throw Problem(code: "pane_not_found", locus: runtimeLocus, retry: .afterRefresh,
                                           recoveryAction: "refreshSnapshot", phase: .mutation)
                         }
                         // Where the Pane is, else where its Workspace works, else the home
@@ -786,7 +791,7 @@ struct NorthpaneBridge {
                         await audit(category: "pane", reference: created.paneID,
                                                  outcome: "applied", reason: created.agentStartFailed ? "client-requested-split-agent-failed" : "client-requested-split")
                         let launchProblem = created.agentStartFailed
-                            ? Problem(code: "workspace_agent_start_failed", locus: .herdr, retry: .afterUserAction,
+                            ? Problem(code: "workspace_agent_start_failed", locus: runtimeLocus, retry: .afterUserAction,
                                       recoveryAction: "openWorkspaceAndStartAgent", phase: .mutation)
                             : nil
                         let receipt = WireMutationReceipt(commandID: mutation.commandID, outcome: .applied,
@@ -798,12 +803,12 @@ struct NorthpaneBridge {
                     } catch let problem as Problem {
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .rejected, problem: problem))
                     } catch AgentExecutableResolutionError.unavailable {
-                        let problem = Problem(code: "workspace_agent_unavailable", locus: .herdr, retry: .afterUserAction,
+                        let problem = Problem(code: "workspace_agent_unavailable", locus: runtimeLocus, retry: .afterUserAction,
                                               recoveryAction: "installAgentOrChooseShell", phase: .mutation)
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied, problem: problem,
                                                                  workspaceAgentKind: mutation.workspaceAgentKind))
                     } catch {
-                        let problem = Problem(code: "pane_split_failed", locus: .herdr, retry: .afterRefresh,
+                        let problem = Problem(code: "pane_split_failed", locus: runtimeLocus, retry: .afterRefresh,
                                               recoveryAction: "refreshWorkspaceAndRetry", phase: .mutation)
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied, problem: problem))
                     }
@@ -824,7 +829,7 @@ struct NorthpaneBridge {
                               !mutation.workspaceLabel.contains(where: \.isNewline)
                         else { throw Problem.malformedFrame }
                         guard await observation.snapshot?.workspaces.contains(where: { $0.id == workspaceID }) == true else {
-                            throw Problem(code: "workspace_not_found", locus: .herdr, retry: .afterRefresh,
+                            throw Problem(code: "workspace_not_found", locus: runtimeLocus, retry: .afterRefresh,
                                           recoveryAction: "refreshSnapshot", phase: .mutation)
                         }
                         try await context.renameWorkspace(workspaceID: workspaceID, label: mutation.workspaceLabel,
@@ -839,7 +844,7 @@ struct NorthpaneBridge {
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .rejected,
                                                                   problem: problem))
                     } catch {
-                        let problem = Problem(code: "workspace_rename_failed", locus: .herdr, retry: .afterRefresh,
+                        let problem = Problem(code: "workspace_rename_failed", locus: runtimeLocus, retry: .afterRefresh,
                                               recoveryAction: "refreshWorkspaceAndRetry", phase: .mutation)
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied,
                                                                   problem: problem))
@@ -856,7 +861,7 @@ struct NorthpaneBridge {
                             throw Problem.malformedFrame
                         }
                         guard await observation.snapshot?.workspaces.contains(where: { $0.id == workspaceID }) == true else {
-                            throw Problem(code: "workspace_not_found", locus: .herdr, retry: .afterRefresh,
+                            throw Problem(code: "workspace_not_found", locus: runtimeLocus, retry: .afterRefresh,
                                           recoveryAction: "refreshSnapshot", phase: .mutation)
                         }
                         try await context.closeWorkspace(workspaceID: workspaceID, sessionName: await observation.sessionName)
@@ -870,7 +875,7 @@ struct NorthpaneBridge {
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .rejected,
                                                                   problem: problem))
                     } catch {
-                        let problem = Problem(code: "workspace_close_failed", locus: .herdr, retry: .afterRefresh,
+                        let problem = Problem(code: "workspace_close_failed", locus: runtimeLocus, retry: .afterRefresh,
                                               recoveryAction: "refreshWorkspaceAndRetry", phase: .mutation)
                         responsePayload = .mutationReceipt(.init(commandID: mutation.commandID, outcome: .notApplied,
                                                                   problem: problem))
@@ -973,7 +978,7 @@ struct NorthpaneBridge {
                 } else if transport.kind == .localIPC, localPublisherProcessID != nil {
                     do { snapshot = try await context.currentSnapshot(sessionName: nil) }
                     catch {
-                        responsePayload = .problem(Problem(code: "herdr_snapshot_failed", locus: .herdr, retry: .afterRefresh, recoveryAction: "startHerdrOrRetry", phase: .snapshot))
+                        responsePayload = .problem(Problem(code: runtimePrefix + "_snapshot_failed", locus: runtimeLocus, retry: .afterRefresh, recoveryAction: nativeRuntime ? "startRuntimeOrRetry" : "startHerdrOrRetry", phase: .snapshot))
                         break
                     }
                 } else {
@@ -1261,7 +1266,8 @@ private actor BridgeConnectionObservation {
             } catch {
                 ready = false
                 snapshot = nil
-                let problem = Problem(code: "herdr_event_reconciliation_failed", locus: .herdr, retry: .afterRefresh, recoveryAction: "requestFullSnapshot", phase: .events)
+                let native = await context.detectedRuntimeDescriptor().kind == .native
+                let problem = Problem(code: native ? "runtime_event_reconciliation_failed" : "herdr_event_reconciliation_failed", locus: native ? .runtime : .herdr, retry: .afterRefresh, recoveryAction: "requestFullSnapshot", phase: .events)
                 try? await transport.send(Envelope(connectionID: connectionID, channelID: channelID, payload: .problem(problem)))
             }
         }
@@ -1383,10 +1389,7 @@ actor BridgeHostContext {
 
     init(stateDirectory configuredStateDirectory: URL? = nil,
          conversationReader: @escaping @Sendable (AgentConversationRequest, String) async -> AgentConversationReading = { await AgentConversationReader.read($0, directory: $1) },
-         runtimeFactory: @escaping @Sendable (String?, String) throws -> any HostRuntime = {
-             try HerdrHostRuntime(sessionName: $0, incarnationID: $1)
-         }) async throws {
-        self.runtimeFactory = runtimeFactory
+         runtimeFactory: (@Sendable (String?, String) throws -> any HostRuntime)? = nil) async throws {
         self.conversationReader = conversationReader
         let environment = ProcessInfo.processInfo.environment
         let stateDirectory = configuredStateDirectory ?? environment["NORTHPANE_STATE_DIRECTORY"].map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -1406,6 +1409,17 @@ actor BridgeHostContext {
             at: stateDirectory.appending(path: "host-identity.json"),
             secureStore: identityStore
         )
+        if let runtimeFactory { self.runtimeFactory = runtimeFactory }
+        else {
+            let selection = try RuntimeSelection.resolve(environment: environment,
+                homeDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
+            guard let executable = Bundle.main.executableURL else { throw NativeSelectionError.unsupportedPlatform }
+            let hostID = stored.hostID
+            self.runtimeFactory = { sessionName, incarnationID in
+                try selection.makeRuntime(stateDirectory: stateDirectory, hostID: hostID, executableURL: executable,
+                    sessionName: sessionName, incarnationID: incarnationID)
+            }
+        }
         let bindingKey = Data(SHA256.hash(data: stored.privateKey + Data("northpane-conversation-bindings-v1".utf8)))
         conversationBindings = ConversationBindingStore(directory: stateDirectory.appending(path: "services/conversation-bindings-v1"), encryptionKey: bindingKey)
         pairingFile = stateDirectory.appending(path: "paired-devices.json")
@@ -1438,13 +1452,17 @@ actor BridgeHostContext {
         return runtime
     }
 
-    func detectedHerdrVersion() async -> String {
-        // Discovery remains available when no executable can be resolved.
-        if let configured = ProcessInfo.processInfo.environment["NORTHPANE_HERDR_VERSION"], !configured.isEmpty {
-            return configured
+    func detectedRuntimeDescriptor() async -> RuntimeDescriptor {
+        guard let runtime = try? hostRuntime(sessionName: nil) else {
+            return RuntimeDescriptor(kind: .herdr, version: "unavailable", incarnationID: runtimeIncarnationID)
         }
-        guard let runtime = try? hostRuntime(sessionName: nil) else { return "unavailable" }
-        return await runtime.descriptor.version
+        if await runtime.descriptor.kind == .native { try? await runtime.ensureRunning() }
+        return await runtime.descriptor
+    }
+
+    func detectedHerdrVersion() async -> String {
+        let descriptor = await detectedRuntimeDescriptor()
+        return descriptor.kind == .herdr ? descriptor.version : ""
     }
 
     func currentSnapshot(sessionName: String?) async throws -> WireRuntimeSnapshot {

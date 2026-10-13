@@ -122,6 +122,8 @@ enum BridgeWireMapper {
         result.hostSigningPublicKey = value.hostSigningPublicKey
         result.hostIdentitySignature = value.hostIdentitySignature
         result.herdrVersion = value.herdrVersion
+        result.runtimeKind = value.runtimeKind ?? ""
+        result.runtimeVersion = value.runtimeVersion ?? ""
         result.bridgeBuildID = value.bridgeBuildID
         result.hostPlatform = value.hostPlatform
         result.deviceChallenge = value.deviceChallenge
@@ -130,7 +132,7 @@ enum BridgeWireMapper {
 
     private static func decode(_ value: Northpane_Bridge_V1_HandshakeAccepted) throws -> HandshakeAccepted {
         guard let host = UUID(uuidString: value.hostID) else { throw Problem.malformedFrame }
-        return HandshakeAccepted(protocolMajor: try integer(value.protocolMajor), schemaRevision: try integer(value.schemaRevision), hostID: .init(rawValue: host), capabilities: Set(try value.capabilities.map(decode)), bridgeVersion: value.bridgeVersion, maximumFrameBytes: try integer(value.maximumFrameBytes), hostSigningPublicKey: value.hostSigningPublicKey, hostIdentitySignature: value.hostIdentitySignature, herdrVersion: value.herdrVersion, bridgeBuildID: value.bridgeBuildID, hostPlatform: value.hostPlatform, deviceChallenge: value.deviceChallenge)
+        return HandshakeAccepted(protocolMajor: try integer(value.protocolMajor), schemaRevision: try integer(value.schemaRevision), hostID: .init(rawValue: host), capabilities: Set(try value.capabilities.map(decode)), bridgeVersion: value.bridgeVersion, maximumFrameBytes: try integer(value.maximumFrameBytes), hostSigningPublicKey: value.hostSigningPublicKey, hostIdentitySignature: value.hostIdentitySignature, herdrVersion: value.herdrVersion, bridgeBuildID: value.bridgeBuildID, hostPlatform: value.hostPlatform, deviceChallenge: value.deviceChallenge, runtimeKind: value.runtimeKind.isEmpty ? nil : value.runtimeKind, runtimeVersion: value.runtimeVersion.isEmpty ? nil : value.runtimeVersion)
     }
 
     private static func encode(_ value: Problem) -> Northpane_Bridge_V1_Problem {
@@ -444,8 +446,8 @@ enum BridgeWireMapper {
 
     private static func encode(_ value: Capability) -> Northpane_Bridge_V1_Capability { switch value { case .observeRuntime: .observeRuntime; case .terminalObserve: .terminalObserve; case .terminalControl: .terminalControl; case .attention: .attention; case .artifactPublication: .artifactPublication; case .preview: .preview; case .authorizationBroker: .authorizationBroker; case .notifications: .notifications } }
     private static func decode(_ value: Northpane_Bridge_V1_Capability) throws -> Capability { switch value { case .observeRuntime: .observeRuntime; case .terminalObserve: .terminalObserve; case .terminalControl: .terminalControl; case .attention: .attention; case .artifactPublication: .artifactPublication; case .preview: .preview; case .authorizationBroker: .authorizationBroker; case .notifications: .notifications; default: throw Problem.malformedFrame } }
-    private static func encode(_ value: ProblemLocus) -> Northpane_Bridge_V1_ProblemLocus { switch value { case .client: .client; case .transport: .transport; case .bridge: .bridge; case .herdr: .herdr; case .managedService: .managedService } }
-    private static func decode(_ value: Northpane_Bridge_V1_ProblemLocus) throws -> ProblemLocus { switch value { case .client: .client; case .transport: .transport; case .bridge: .bridge; case .herdr: .herdr; case .managedService: .managedService; default: throw Problem.malformedFrame } }
+    private static func encode(_ value: ProblemLocus) -> Northpane_Bridge_V1_ProblemLocus { switch value { case .client: .client; case .transport: .transport; case .bridge: .bridge; case .herdr: .herdr; case .managedService: .managedService; case .runtime: .runtime } }
+    private static func decode(_ value: Northpane_Bridge_V1_ProblemLocus) throws -> ProblemLocus { switch value { case .client: .client; case .transport: .transport; case .bridge: .bridge; case .herdr: .herdr; case .managedService: .managedService; case .runtime: .runtime; default: throw Problem.malformedFrame } }
     private static func encode(_ value: RetryClass) -> Northpane_Bridge_V1_RetryClass { switch value { case .never: .never; case .afterUserAction: .afterUserAction; case .afterReconnect: .afterReconnect; case .afterRefresh: .afterRefresh } }
     private static func decode(_ value: Northpane_Bridge_V1_RetryClass) throws -> RetryClass { switch value { case .never: .never; case .afterUserAction: .afterUserAction; case .afterReconnect: .afterReconnect; case .afterRefresh: .afterRefresh; default: throw Problem.malformedFrame } }
     private static func encode(_ value: OperationPhase) -> Northpane_Bridge_V1_OperationPhase { switch value { case .handshake: .handshake; case .trust: .trust; case .pairing: .pairing; case .discovery: .discovery; case .compatibility: .compatibility; case .snapshot: .snapshot; case .events: .events; case .mutation: .mutation; case .terminal: .terminal; case .resource: .resource; case .service: .service } }

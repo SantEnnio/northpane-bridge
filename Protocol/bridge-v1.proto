@@ -21,6 +21,7 @@ enum ProblemLocus {
   BRIDGE = 3;
   HERDR = 4;
   MANAGED_SERVICE = 5;
+  RUNTIME = 6;
 }
 
 enum RetryClass {
@@ -163,6 +164,11 @@ message HandshakeAccepted {
   // the identity it declared in HandshakeHello authenticates nothing. Empty from a Bridge that
   // predates revision 20, or when the two ends settled on an older revision.
   bytes device_challenge = 12;
+  // Runtime selected for this Host: "herdr" or "native" (revision 25).
+  // Empty from older Bridges means legacy Herdr. A native Bridge requires
+  // revision 25 so old Clients never mistake it for an unavailable Herdr.
+  string runtime_kind = 13;
+  string runtime_version = 14;
 }
 
 message Problem {

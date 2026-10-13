@@ -95,6 +95,7 @@ nonisolated enum Northpane_Bridge_V1_ProblemLocus: SwiftProtobuf.Enum, Swift.Cas
   case bridge // = 3
   case herdr // = 4
   case managedService // = 5
+  case runtime // = 6
   case UNRECOGNIZED(Int)
 
   init() {
@@ -109,6 +110,7 @@ nonisolated enum Northpane_Bridge_V1_ProblemLocus: SwiftProtobuf.Enum, Swift.Cas
     case 3: self = .bridge
     case 4: self = .herdr
     case 5: self = .managedService
+    case 6: self = .runtime
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -121,6 +123,7 @@ nonisolated enum Northpane_Bridge_V1_ProblemLocus: SwiftProtobuf.Enum, Swift.Cas
     case .bridge: return 3
     case .herdr: return 4
     case .managedService: return 5
+    case .runtime: return 6
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -133,6 +136,7 @@ nonisolated enum Northpane_Bridge_V1_ProblemLocus: SwiftProtobuf.Enum, Swift.Cas
     .bridge,
     .herdr,
     .managedService,
+    .runtime,
   ]
 
 }
@@ -1502,6 +1506,13 @@ nonisolated struct Northpane_Bridge_V1_HandshakeAccepted: Sendable {
   /// predates revision 20, or when the two ends settled on an older revision.
   var deviceChallenge: Data = Data()
 
+  /// Runtime selected for this Host: "herdr" or "native" (revision 25).
+  /// Empty from older Bridges means legacy Herdr. A native Bridge requires
+  /// revision 25 so old Clients never mistake it for an unavailable Herdr.
+  var runtimeKind: String = String()
+
+  var runtimeVersion: String = String()
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   init() {}
@@ -2597,7 +2608,7 @@ nonisolated extension Northpane_Bridge_V1_Capability: SwiftProtobuf._ProtoNamePr
 }
 
 nonisolated extension Northpane_Bridge_V1_ProblemLocus: SwiftProtobuf._ProtoNameProviding {
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PROBLEM_LOCUS_UNSPECIFIED\0\u{1}CLIENT\0\u{1}TRANSPORT\0\u{1}BRIDGE\0\u{1}HERDR\0\u{1}MANAGED_SERVICE\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PROBLEM_LOCUS_UNSPECIFIED\0\u{1}CLIENT\0\u{1}TRANSPORT\0\u{1}BRIDGE\0\u{1}HERDR\0\u{1}MANAGED_SERVICE\0\u{1}RUNTIME\0")
 }
 
 nonisolated extension Northpane_Bridge_V1_RetryClass: SwiftProtobuf._ProtoNameProviding {
@@ -3405,7 +3416,7 @@ nonisolated extension Northpane_Bridge_V1_HandshakeHello: SwiftProtobuf.Message,
 
 nonisolated extension Northpane_Bridge_V1_HandshakeAccepted: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".HandshakeAccepted"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_major\0\u{3}schema_revision\0\u{3}host_id\0\u{1}capabilities\0\u{3}bridge_version\0\u{3}maximum_frame_bytes\0\u{3}host_signing_public_key\0\u{3}host_identity_signature\0\u{3}herdr_version\0\u{3}bridge_build_id\0\u{3}host_platform\0\u{3}device_challenge\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_major\0\u{3}schema_revision\0\u{3}host_id\0\u{1}capabilities\0\u{3}bridge_version\0\u{3}maximum_frame_bytes\0\u{3}host_signing_public_key\0\u{3}host_identity_signature\0\u{3}herdr_version\0\u{3}bridge_build_id\0\u{3}host_platform\0\u{3}device_challenge\0\u{3}runtime_kind\0\u{3}runtime_version\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3425,6 +3436,8 @@ nonisolated extension Northpane_Bridge_V1_HandshakeAccepted: SwiftProtobuf.Messa
       case 10: try { try decoder.decodeSingularStringField(value: &self.bridgeBuildID) }()
       case 11: try { try decoder.decodeSingularStringField(value: &self.hostPlatform) }()
       case 12: try { try decoder.decodeSingularBytesField(value: &self.deviceChallenge) }()
+      case 13: try { try decoder.decodeSingularStringField(value: &self.runtimeKind) }()
+      case 14: try { try decoder.decodeSingularStringField(value: &self.runtimeVersion) }()
       default: break
       }
     }
@@ -3467,6 +3480,12 @@ nonisolated extension Northpane_Bridge_V1_HandshakeAccepted: SwiftProtobuf.Messa
     if !self.deviceChallenge.isEmpty {
       try visitor.visitSingularBytesField(value: self.deviceChallenge, fieldNumber: 12)
     }
+    if !self.runtimeKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.runtimeKind, fieldNumber: 13)
+    }
+    if !self.runtimeVersion.isEmpty {
+      try visitor.visitSingularStringField(value: self.runtimeVersion, fieldNumber: 14)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3483,6 +3502,8 @@ nonisolated extension Northpane_Bridge_V1_HandshakeAccepted: SwiftProtobuf.Messa
     if lhs.bridgeBuildID != rhs.bridgeBuildID {return false}
     if lhs.hostPlatform != rhs.hostPlatform {return false}
     if lhs.deviceChallenge != rhs.deviceChallenge {return false}
+    if lhs.runtimeKind != rhs.runtimeKind {return false}
+    if lhs.runtimeVersion != rhs.runtimeVersion {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
