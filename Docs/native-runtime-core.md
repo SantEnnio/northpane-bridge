@@ -1,7 +1,17 @@
 # Native runtime core
 
 This module is preparation for Hosts without Herdr. The Bridge still selects
-Herdr; no native Workspace service or terminal attachment is enabled yet.
+Herdr; no native terminal attachment is enabled yet. The user-local daemon
+owns the persistent Workspace/tab/Pane graph and exposes typed shape operations
+over its private socket. Two Bridge connections observe and mutate the same
+graph; detaching them leaves the daemon and graph intact. A daemon restart
+reloads the graph with a new incarnation and never reuses closed identities.
+
+The additive `workspace_model` handshake capability distinguishes older
+healthy owners. A newer Bridge does not restart an older owner to gain it,
+and refuses unsupported Workspace commands before sending them. The IPC
+revision remains 1; the Client/Bridge protocol is unchanged by these operations.
+Command failures preserve the stream and do not publish an invalid mutation.
 
 ## PTY ownership
 
@@ -17,7 +27,8 @@ with `waitpid`. Linux PTY `EIO` is treated as EOF. Input handles short writes an
 backpressure; resize uses `TIOCSWINSZ`. Explicit Pane closure escalates from TERM
 to KILL after two seconds. Client detach must leave the PTY owner alone.
 Persistence across Bridge/SSH process exit requires the separate runtime
-service, which is not implemented by this module.
+daemon. Its lifecycle and user-service setup exist; PTY ownership by that
+daemon is the next integration step.
 
 Windows compiles the terminal engine and replay tests but does not yet provide
 ConPTY. No Unix process API is exposed there.

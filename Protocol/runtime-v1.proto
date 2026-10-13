@@ -8,6 +8,7 @@ message Request {
   oneof operation {
     Hello hello = 2;
     Ping ping = 3;
+    WorkspaceCommand workspace = 4;
   }
 }
 message Hello { uint32 revision = 1; }
@@ -17,6 +18,7 @@ message Response {
   oneof outcome {
     Ready ready = 2;
     Failure failure = 3;
+    WorkspaceResult workspace = 4;
   }
 }
 message Ready {
@@ -24,5 +26,33 @@ message Ready {
   string incarnation = 2;
   string version = 3;
   int64 process_id = 4;
+  bool workspace_model = 5;
 }
 message Failure { string code = 1; }
+
+// Shape-only operations. The handshake advertises support; an older healthy
+// owner is never restarted merely because it lacks this additive capability.
+message WorkspaceCommand {
+  string host_id = 1;
+  oneof operation {
+    Snapshot snapshot = 2;
+    CreateWorkspace create_workspace = 3;
+    CreateTab create_tab = 4;
+    SplitPane split_pane = 5;
+    RenameWorkspace rename_workspace = 6;
+    CloseWorkspace close_workspace = 7;
+  }
+}
+message Snapshot {}
+message CreateWorkspace { string label = 1; string working_directory = 2; }
+message CreateTab { string workspace_id = 1; string working_directory = 2; }
+enum SplitDirection { UNSPECIFIED = 0; RIGHT = 1; DOWN = 2; }
+message SplitPane { string pane_id = 1; SplitDirection direction = 2; string working_directory = 3; }
+message RenameWorkspace { string workspace_id = 1; string label = 2; }
+message CloseWorkspace { string workspace_id = 1; }
+message WorkspaceResult {
+  // The shared snapshot representation, avoiding a second graph contract here.
+  bytes snapshot_json = 1;
+  string workspace_id = 2;
+  string pane_id = 3;
+}

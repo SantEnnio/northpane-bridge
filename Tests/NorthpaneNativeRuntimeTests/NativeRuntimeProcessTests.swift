@@ -2,6 +2,7 @@
 import Foundation
 import Testing
 import NorthpaneRuntimeIPC
+import NorthpaneProtocol
 @testable import NorthpaneNativeRuntime
 #if os(macOS)
 import Darwin
@@ -16,9 +17,9 @@ import Musl
         URL(fileURLWithPath: "/tmp/np-" + UUID().uuidString.prefix(12), isDirectory: true)
     }
 
-    private func withServer(_ body: (URL, NativeRuntimeServer) async throws -> Void) async throws {
+    private func withServer(workspaceModelEnabled: Bool = true, _ body: (URL, NativeRuntimeServer) async throws -> Void) async throws {
         let directory = temporary()
-        let server = try NativeRuntimeServer(stateDirectory: directory, version: "test")
+        let server = try NativeRuntimeServer(stateDirectory: directory, version: "test", workspaceModelEnabled: workspaceModelEnabled)
         // run() owns a blocking accept loop. A detached Swift task still runs
         // on the cooperative pool and starves async clients on small runners.
         let completed = AsyncStream<Result<Void, any Error>>.makeStream()
@@ -38,6 +39,82 @@ import Musl
             throw error
         }
         try FileManager.default.removeItem(at: directory)
+    }
+
+    @Test func workspaceGraphIsSharedPersistedAndSurvivesClientDetach() async throws {
+        try await withServer { directory, server in
+            let host = HostID(rawValue: UUID())
+            let first = try await NativeRuntimeConnection.connect(stateDirectory: directory)
+            let second = try await NativeRuntimeConnection.connect(stateDirectory: directory)
+            defer { first.close(); second.close() }
+            #expect(first.status.workspaceModel)
+            let created = try await first.createWorkspace(hostID: host, label: "Project", workingDirectory: "/tmp")
+            #expect(created.workspaceID == "w1" && created.paneID == "w1:p1")
+            _ = try await second.createTab(hostID: host, workspaceID: created.workspaceID, workingDirectory: "/tmp")
+            _ = try await first.splitPane(hostID: host, paneID: "w1:p2", direction: .down, workingDirectory: "/tmp")
+            try await second.renameWorkspace(hostID: host, workspaceID: "w1", label: "Renamed")
+            let expected = try await first.currentSnapshot(hostID: host)
+            #expect(expected.workspaces.first?.label == "Renamed")
+            #expect(expected.tabs.count == 2 && expected.panes.count == 3)
+            #expect(expected.capabilities.isEmpty)
+            first.close()
+            #expect(try await second.currentSnapshot(hostID: host) == expected)
+            let saved = try NativeWorkspaceStore(fileURL: directory.appending(path: "runtime/layout-v1.json"), incarnationID: server.status.incarnationID)
+            #expect(saved.snapshot(hostID: host).panes.map(\.id) == expected.panes.map(\.id))
+            let reconnected = try await NativeRuntimeConnection.connect(stateDirectory: directory)
+            defer { reconnected.close() }
+            #expect(try await reconnected.currentSnapshot(hostID: host) == expected)
+            try await reconnected.closeWorkspace(hostID: host, workspaceID: "w1")
+            #expect(try await second.currentSnapshot(hostID: host).panes.isEmpty)
+        }
+    }
+
+    @Test func rejectedWorkspaceEditsKeepTheGraphAndConnectionUsable() async throws {
+        try await withServer { directory, _ in
+            let client = try await NativeRuntimeConnection.connect(stateDirectory: directory)
+            defer { client.close() }
+            let host = HostID(rawValue: UUID())
+            _ = try await client.createWorkspace(hostID: host, label: "Project", workingDirectory: "/tmp")
+            let before = try await client.currentSnapshot(hostID: host)
+            await #expect(throws: NativeRuntimeProcessError.rejected("unknown_workspace")) {
+                try await client.createTab(hostID: host, workspaceID: "w99", workingDirectory: "/tmp")
+            }
+            await #expect(throws: NativeRuntimeProcessError.rejected("invalid_working_directory")) {
+                try await client.createWorkspace(hostID: host, label: "Invalid", workingDirectory: "relative")
+            }
+            #expect(try await client.currentSnapshot(hostID: host) == before)
+            #expect(try await client.ping() == client.status)
+        }
+    }
+
+    @Test func olderHealthyOwnerIsReusedWithoutWorkspaceCommandsOrRestart() async throws {
+        try await withServer(workspaceModelEnabled: false) { directory, server in
+            let connection = try await NativeRuntimeLauncher.ensureRunning(stateDirectory: directory,
+                executableURL: URL(fileURLWithPath: "/not-an-executable"))
+            defer { connection.close() }
+            #expect(connection.status == server.status && !connection.status.workspaceModel)
+            await #expect(throws: NativeRuntimeProcessError.rejected("workspace_model_unavailable")) {
+                try await connection.currentSnapshot(hostID: HostID(rawValue: UUID()))
+            }
+            #expect(try await connection.ping() == server.status)
+        }
+    }
+
+    @Test func simultaneousClientsCannotLoseWorkspaceMutations() async throws {
+        try await withServer { directory, _ in
+            let host = HostID(rawValue: UUID())
+            var connections: [NativeRuntimeConnection] = []
+            for _ in 0..<8 { connections.append(try await NativeRuntimeConnection.connect(stateDirectory: directory)) }
+            defer { connections.forEach { $0.close() } }
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                for (index, client) in connections.enumerated() {
+                    group.addTask { _ = try await client.createWorkspace(hostID: host, label: "Project \(index)", workingDirectory: "/tmp") }
+                }
+                try await group.waitForAll()
+            }
+            let snapshot = try await connections[0].currentSnapshot(hostID: host)
+            #expect(snapshot.workspaces.count == 8 && Set(snapshot.workspaces.map(\.id)).count == 8)
+        }
     }
 
     @Test func connectionsShareOneIncarnationAndDetachIndependently() async throws {
@@ -181,7 +258,10 @@ import Musl
         // A different/new executable must not be launched while an owner is healthy.
         let reused = try await NativeRuntimeLauncher.ensureRunning(stateDirectory: directory,
             executableURL: URL(fileURLWithPath: "/missing/new-version"))
-        #expect(reused.status == first); reused.close()
+        #expect(reused.status == first)
+        let host = HostID(rawValue: UUID())
+        let created = try await reused.createWorkspace(hostID: host, label: "Persistent", workingDirectory: "/tmp")
+        reused.close()
         #expect(kill(owner, SIGKILL) == 0)
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         repeat {
@@ -195,6 +275,13 @@ import Musl
         #expect(replacement.incarnationID != first.incarnationID)
         #expect(replacement.processID != first.processID)
         #expect(try await runCLI(binary, directory: directory, argument: "--status") == replacement)
+        let recovered = try await NativeRuntimeConnection.connect(stateDirectory: directory)
+        defer { recovered.close() }
+        let snapshot = try await recovered.currentSnapshot(hostID: host)
+        #expect(snapshot.incarnationID == replacement.incarnationID)
+        #expect(snapshot.workspaces.map(\.id) == [created.workspaceID])
+        #expect(snapshot.panes.map(\.id) == [created.paneID])
+        #expect(try await recovered.createWorkspace(hostID: host, label: "Next", workingDirectory: "/tmp").workspaceID == "w2")
     }
 
     @Test func detachedExecFailureIsReportedInsteadOfLeavingAFalseOwner() async throws {

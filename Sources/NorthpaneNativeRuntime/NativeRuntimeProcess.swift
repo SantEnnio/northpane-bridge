@@ -1,5 +1,7 @@
 #if os(macOS) || os(Linux)
 import Foundation
+import NorthpaneHostRuntime
+import NorthpaneProtocol
 import NorthpaneRuntimeIPC
 import SwiftProtobuf
 #if os(macOS)
@@ -25,6 +27,7 @@ public struct NativeRuntimeStatus: Equatable, Codable, Sendable {
     public let incarnationID: String
     public let version: String
     public let processID: Int32
+    public let workspaceModel: Bool
 }
 
 private enum RuntimeIPC {
@@ -99,11 +102,75 @@ public final class NativeRuntimeConnection: @unchecked Sendable {
             throw NativeRuntimeProcessError.invalidFrame
         }
         return NativeRuntimeStatus(revision: ready.revision, incarnationID: ready.incarnation,
-            version: ready.version, processID: pid)
+            version: ready.version, processID: pid, workspaceModel: ready.workspaceModel)
+    }
+
+    public func currentSnapshot(hostID: HostID) async throws -> WireRuntimeSnapshot {
+        try await workspace(hostID: hostID) { $0.snapshot = .init() }.snapshot
+    }
+
+    public func createWorkspace(hostID: HostID, label: String, workingDirectory: String) async throws -> CreatedPane {
+        try await workspace(hostID: hostID) {
+            $0.createWorkspace.label = label; $0.createWorkspace.workingDirectory = workingDirectory
+        }.created()
+    }
+
+    public func createTab(hostID: HostID, workspaceID: String, workingDirectory: String) async throws -> CreatedPane {
+        try await workspace(hostID: hostID) {
+            $0.createTab.workspaceID = workspaceID; $0.createTab.workingDirectory = workingDirectory
+        }.created()
+    }
+
+    public func splitPane(hostID: HostID, paneID: String, direction: PaneSplitDirection, workingDirectory: String) async throws -> CreatedPane {
+        try await workspace(hostID: hostID) {
+            $0.splitPane.paneID = paneID; $0.splitPane.direction = direction == .right ? .right : .down
+            $0.splitPane.workingDirectory = workingDirectory
+        }.created()
+    }
+
+    public func renameWorkspace(hostID: HostID, workspaceID: String, label: String) async throws {
+        _ = try await workspace(hostID: hostID) { $0.renameWorkspace.workspaceID = workspaceID; $0.renameWorkspace.label = label }
+    }
+
+    public func closeWorkspace(hostID: HostID, workspaceID: String) async throws {
+        _ = try await workspace(hostID: hostID) { $0.closeWorkspace.workspaceID = workspaceID }
+    }
+
+    private struct WorkspaceResult {
+        let snapshot: WireRuntimeSnapshot
+        let workspaceID: String
+        let paneID: String
+        func created() throws -> CreatedPane {
+            guard snapshot.workspaces.contains(where: { $0.id == workspaceID }),
+                  snapshot.panes.contains(where: { $0.id == paneID && $0.workspaceID == workspaceID }) else {
+                throw NativeRuntimeProcessError.invalidFrame
+            }
+            return CreatedPane(workspaceID: workspaceID, paneID: paneID)
+        }
+    }
+
+    private func workspace(hostID: HostID, configure: @Sendable (inout Northpane_Runtime_V1_WorkspaceCommand) -> Void) async throws -> WorkspaceResult {
+        guard status.workspaceModel else { throw NativeRuntimeProcessError.rejected("workspace_model_unavailable") }
+        var command = Northpane_Runtime_V1_WorkspaceCommand()
+        command.hostID = hostID.rawValue.uuidString
+        configure(&command)
+        let operation = command
+        return try await Task.detached { [self] in
+            var request = Northpane_Runtime_V1_Request()
+            request.id = 3; request.workspace = operation
+            let response = try socket.exchange(request)
+            if case let .failure(failure) = response.outcome { throw NativeRuntimeProcessError.rejected(failure.code) }
+            guard case let .workspace(result) = response.outcome else { throw NativeRuntimeProcessError.invalidFrame }
+            let snapshot = try JSONDecoder().decode(WireRuntimeSnapshot.self, from: result.snapshotJson)
+            guard snapshot.hostID == hostID, snapshot.incarnationID == status.incarnationID else {
+                throw NativeRuntimeProcessError.invalidFrame
+            }
+            return WorkspaceResult(snapshot: snapshot, workspaceID: result.workspaceID, paneID: result.paneID)
+        }.value
     }
 }
 
-/// Initial lifecycle/IPC foundation. It does not yet expose Workspace or terminal commands.
+/// User-local daemon owning the coherent Workspace graph under its process lock.
 /// Herdr remains selected by the Bridge; this process is explicitly started for certification.
 public final class NativeRuntimeServer: @unchecked Sendable {
     private let listener: Int32
@@ -112,20 +179,28 @@ public final class NativeRuntimeServer: @unchecked Sendable {
     private let stateLock = NSLock()
     private var stopping = false
     private var connections: Set<Int32> = []
+    private let workspaceLock = NSLock()
+    private let workspaces: NativeWorkspaceStore?
     public let status: NativeRuntimeStatus
 
-    public init(stateDirectory: URL, version: String) throws {
+    public convenience init(stateDirectory: URL, version: String) throws {
+        try self.init(stateDirectory: stateDirectory, version: version, workspaceModelEnabled: true)
+    }
+
+    init(stateDirectory: URL, version: String, workspaceModelEnabled: Bool) throws {
         guard !version.isEmpty else { throw NativeRuntimeProcessError.invalidConfiguration }
         let directory = try RuntimeIPC.directory(stateDirectory)
         try FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
         let lock = try RuntimeIPC.descriptor(np_runtime_lock(directory.path))
+        let incarnation = UUID().uuidString
         do {
+            workspaces = workspaceModelEnabled ? try NativeWorkspaceStore(fileURL: directory.appending(path: "layout-v1.json"), incarnationID: incarnation) : nil
             socketPath = try RuntimeIPC.socket(stateDirectory)
             listener = try RuntimeIPC.descriptor(np_runtime_listen(socketPath))
         } catch { np_runtime_close(lock); throw error }
         lockDescriptor = lock
-        status = NativeRuntimeStatus(revision: RuntimeIPC.revision, incarnationID: UUID().uuidString,
-            version: version, processID: getpid())
+        status = NativeRuntimeStatus(revision: RuntimeIPC.revision, incarnationID: incarnation,
+            version: version, processID: getpid(), workspaceModel: workspaceModelEnabled)
     }
 
     deinit {
@@ -179,6 +254,11 @@ public final class NativeRuntimeServer: @unchecked Sendable {
                     }
                     negotiated = hello.revision
                 case .ping where negotiated != nil: break
+                case let .workspace(command) where negotiated != nil:
+                    do { response.workspace = try execute(command) }
+                    catch { response.failure.code = Self.failureCode(error) }
+                    try socket.send(response)
+                    continue
                 default:
                     response.failure.code = "invalid_operation"
                     try socket.send(response); return
@@ -187,8 +267,45 @@ public final class NativeRuntimeServer: @unchecked Sendable {
                 response.ready.incarnation = status.incarnationID
                 response.ready.version = status.version
                 response.ready.processID = Int64(status.processID)
+                response.ready.workspaceModel = status.workspaceModel
                 try socket.send(response)
             } catch { return }
+        }
+    }
+
+    private func execute(_ command: Northpane_Runtime_V1_WorkspaceCommand) throws -> Northpane_Runtime_V1_WorkspaceResult {
+        guard let workspaces else { throw NativeRuntimeProcessError.rejected("workspace_model_unavailable") }
+        guard let id = UUID(uuidString: command.hostID) else { throw NativeRuntimeProcessError.invalidConfiguration }
+        return try workspaceLock.withLock {
+            var created: CreatedPane?
+            switch command.operation {
+            case .snapshot: break
+            case let .createWorkspace(edit): created = try workspaces.createWorkspace(label: edit.label, workingDirectory: edit.workingDirectory)
+            case let .createTab(edit): created = try workspaces.createTab(workspaceID: edit.workspaceID, workingDirectory: edit.workingDirectory)
+            case let .splitPane(edit):
+                guard edit.direction == .right || edit.direction == .down else { throw NativeRuntimeProcessError.invalidConfiguration }
+                created = try workspaces.splitPane(paneID: edit.paneID, direction: edit.direction == .right ? .right : .down, workingDirectory: edit.workingDirectory)
+            case let .renameWorkspace(edit): try workspaces.renameWorkspace(workspaceID: edit.workspaceID, label: edit.label)
+            case let .closeWorkspace(edit): try workspaces.closeWorkspace(workspaceID: edit.workspaceID)
+            case nil: throw NativeRuntimeProcessError.invalidConfiguration
+            }
+            var result = Northpane_Runtime_V1_WorkspaceResult()
+            result.snapshotJson = try JSONEncoder().encode(workspaces.snapshot(hostID: HostID(rawValue: id)))
+            result.workspaceID = created?.workspaceID ?? ""; result.paneID = created?.paneID ?? ""
+            return result
+        }
+    }
+
+    private static func failureCode(_ error: any Error) -> String {
+        switch error {
+        case NativeRuntimeProcessError.rejected(let code): return code
+        case NativeWorkspaceStoreError.unknownWorkspace: return "unknown_workspace"
+        case NativeWorkspaceStoreError.unknownPane: return "unknown_pane"
+        case NativeWorkspaceStoreError.limitExceeded: return "limit_exceeded"
+        case NativeWorkspaceStoreError.invalidLayout: return "invalid_layout"
+        case HostRuntimeError.invalidWorkingDirectory: return "invalid_working_directory"
+        case NativeRuntimeProcessError.invalidConfiguration: return "invalid_operation"
+        default: return "persistence_failed"
         }
     }
 }
