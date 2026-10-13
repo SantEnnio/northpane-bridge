@@ -28,9 +28,10 @@ public struct NativeRuntimeStatus: Equatable, Codable, Sendable {
     public let version: String
     public let processID: Int32
     public let workspaceModel: Bool
+    public let terminalFrames: Bool
 }
 
-private enum RuntimeIPC {
+enum RuntimeIPC {
     static let revision: UInt32 = 1
     static let maximumFrameBytes = 1_048_576
     static func accepts(_ revision: UInt32) -> Bool {
@@ -55,7 +56,7 @@ private enum RuntimeIPC {
 
 /// One serial RPC connection; closing it never terminates the process it reaches.
 public final class NativeRuntimeConnection: @unchecked Sendable {
-    private let socket: RuntimeSocket
+    let socket: RuntimeSocket
     public let status: NativeRuntimeStatus
     private init(socket: RuntimeSocket, status: NativeRuntimeStatus) {
         self.socket = socket; self.status = status
@@ -66,16 +67,17 @@ public final class NativeRuntimeConnection: @unchecked Sendable {
     }
 
     static func connect(stateDirectory: URL, revision: UInt32) async throws -> NativeRuntimeConnection {
-        try await Task.detached {
-            let path = try RuntimeIPC.socket(stateDirectory)
-            let socket = RuntimeSocket(descriptor: try RuntimeIPC.descriptor(np_runtime_connect(path)))
-            var request = Northpane_Runtime_V1_Request()
-            request.id = 1
-            request.hello.revision = revision
-            let response = try socket.exchange(request)
-            let status = try Self.status(response, expectedRevision: revision)
-            return NativeRuntimeConnection(socket: socket, status: status)
-        }.value
+        try await Task.detached { try connectSynchronously(stateDirectory: stateDirectory, revision: revision) }.value
+    }
+
+    static func connectSynchronously(stateDirectory: URL, revision: UInt32 = 1) throws -> NativeRuntimeConnection {
+        let path = try RuntimeIPC.socket(stateDirectory)
+        let socket = RuntimeSocket(descriptor: try RuntimeIPC.descriptor(np_runtime_connect(path)))
+        var request = Northpane_Runtime_V1_Request()
+        request.id = 1; request.hello.revision = revision
+        let response = try socket.exchange(request)
+        let status = try Self.status(response, expectedRevision: revision)
+        return NativeRuntimeConnection(socket: socket, status: status)
     }
 
     public func ping() async throws -> NativeRuntimeStatus {
@@ -102,16 +104,19 @@ public final class NativeRuntimeConnection: @unchecked Sendable {
             throw NativeRuntimeProcessError.invalidFrame
         }
         return NativeRuntimeStatus(revision: ready.revision, incarnationID: ready.incarnation,
-            version: ready.version, processID: pid, workspaceModel: ready.workspaceModel)
+            version: ready.version, processID: pid, workspaceModel: ready.workspaceModel, terminalFrames: ready.terminalFrames)
     }
 
     public func currentSnapshot(hostID: HostID) async throws -> WireRuntimeSnapshot {
         try await workspace(hostID: hostID) { $0.snapshot = .init() }.snapshot
     }
 
-    public func createWorkspace(hostID: HostID, label: String, workingDirectory: String) async throws -> CreatedPane {
+    public func createWorkspace(hostID: HostID, label: String, workingDirectory: String, environment: [String: String] = [:]) async throws -> CreatedPane {
         try await workspace(hostID: hostID) {
             $0.createWorkspace.label = label; $0.createWorkspace.workingDirectory = workingDirectory
+            $0.createWorkspace.environment = environment.sorted(by: { $0.key < $1.key }).map { pair in
+                var entry = Northpane_Runtime_V1_EnvironmentEntry(); entry.key = pair.key; entry.value = pair.value; return entry
+            }
         }.created()
     }
 
@@ -180,27 +185,27 @@ public final class NativeRuntimeServer: @unchecked Sendable {
     private var stopping = false
     private var connections: Set<Int32> = []
     private let workspaceLock = NSLock()
-    private let workspaces: NativeWorkspaceStore?
+    private let owner: NativeRuntimeOwner?
     public let status: NativeRuntimeStatus
 
     public convenience init(stateDirectory: URL, version: String) throws {
-        try self.init(stateDirectory: stateDirectory, version: version, workspaceModelEnabled: true)
+        try self.init(stateDirectory: stateDirectory, version: version, workspaceModelEnabled: true, processConfiguration: .current())
     }
 
-    init(stateDirectory: URL, version: String, workspaceModelEnabled: Bool) throws {
+    init(stateDirectory: URL, version: String, workspaceModelEnabled: Bool, processConfiguration: NativeProcessConfiguration? = nil) throws {
         guard !version.isEmpty else { throw NativeRuntimeProcessError.invalidConfiguration }
         let directory = try RuntimeIPC.directory(stateDirectory)
         try FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
         let lock = try RuntimeIPC.descriptor(np_runtime_lock(directory.path))
         let incarnation = UUID().uuidString
         do {
-            workspaces = workspaceModelEnabled ? try NativeWorkspaceStore(fileURL: directory.appending(path: "layout-v1.json"), incarnationID: incarnation) : nil
+            owner = workspaceModelEnabled ? try NativeRuntimeOwner(stateDirectory: stateDirectory, incarnationID: incarnation, configuration: processConfiguration) : nil
             socketPath = try RuntimeIPC.socket(stateDirectory)
             listener = try RuntimeIPC.descriptor(np_runtime_listen(socketPath))
         } catch { np_runtime_close(lock); throw error }
         lockDescriptor = lock
         status = NativeRuntimeStatus(revision: RuntimeIPC.revision, incarnationID: incarnation,
-            version: version, processID: getpid(), workspaceModel: workspaceModelEnabled)
+            version: version, processID: getpid(), workspaceModel: workspaceModelEnabled, terminalFrames: workspaceModelEnabled && processConfiguration != nil)
     }
 
     deinit {
@@ -239,6 +244,8 @@ public final class NativeRuntimeServer: @unchecked Sendable {
     }
 
     private func handle(_ socket: RuntimeSocket) {
+        let connectionID = UUID()
+        defer { owner?.disconnect(connectionID: connectionID) }
         var negotiated: UInt32?
         while !stateLock.withLock({ stopping }) {
             do {
@@ -259,6 +266,34 @@ public final class NativeRuntimeServer: @unchecked Sendable {
                     catch { response.failure.code = Self.failureCode(error) }
                     try socket.send(response)
                     continue
+                case let .terminal(command) where negotiated != nil:
+                    do { response.terminal = try execute(command, connectionID: connectionID) }
+                    catch { response.failure.code = Self.failureCode(error) }
+                    try socket.send(response); continue
+                case let .startAgent(command) where negotiated != nil:
+                    do {
+                        guard let owner, owner.terminalFramesAvailable else { throw NativeRuntimeOwnerError.unsupported }
+                        try owner.startAgent(paneID: command.paneID, kind: try Self.agentKind(command.kind), executable: command.executable)
+                        response.acknowledged = .init()
+                    } catch { response.failure.code = Self.failureCode(error) }
+                    try socket.send(response); continue
+                case .observe where negotiated != nil:
+                    guard let owner else { response.failure.code = "workspace_model_unavailable"; try socket.send(response); continue }
+                    response.changes.revision = Int64(owner.revision)
+                    try socket.send(response); continue
+                case let .paneQuery(command) where negotiated != nil:
+                    do {
+                        guard let owner else { throw NativeRuntimeOwnerError.unsupported }
+                        response.pane.scrollbackLines = Int64(owner.scrollbackLines(paneID: command.paneID))
+                        if let identity = owner.conversationIdentity(paneID: command.paneID) {
+                            response.pane.agent = Self.agentKind(identity.agent)
+                            response.pane.processProof = identity.processProof ?? ""
+                        }
+                        if let date = owner.lastActivity(paneID: command.paneID) {
+                            response.pane.lastActivityMilliseconds = Int64(date.timeIntervalSince1970 * 1000)
+                        }
+                    } catch { response.failure.code = Self.failureCode(error) }
+                    try socket.send(response); continue
                 default:
                     response.failure.code = "invalid_operation"
                     try socket.send(response); return
@@ -268,32 +303,82 @@ public final class NativeRuntimeServer: @unchecked Sendable {
                 response.ready.version = status.version
                 response.ready.processID = Int64(status.processID)
                 response.ready.workspaceModel = status.workspaceModel
+                response.ready.terminalFrames = status.terminalFrames
                 try socket.send(response)
             } catch { return }
         }
     }
 
     private func execute(_ command: Northpane_Runtime_V1_WorkspaceCommand) throws -> Northpane_Runtime_V1_WorkspaceResult {
-        guard let workspaces else { throw NativeRuntimeProcessError.rejected("workspace_model_unavailable") }
+        guard let owner else { throw NativeRuntimeProcessError.rejected("workspace_model_unavailable") }
         guard let id = UUID(uuidString: command.hostID) else { throw NativeRuntimeProcessError.invalidConfiguration }
         return try workspaceLock.withLock {
             var created: CreatedPane?
             switch command.operation {
             case .snapshot: break
-            case let .createWorkspace(edit): created = try workspaces.createWorkspace(label: edit.label, workingDirectory: edit.workingDirectory)
-            case let .createTab(edit): created = try workspaces.createTab(workspaceID: edit.workspaceID, workingDirectory: edit.workingDirectory)
+            case let .createWorkspace(edit):
+                var environment: [String: String] = [:]
+                for entry in edit.environment {
+                    guard environment.updateValue(entry.value, forKey: entry.key) == nil else { throw NativeRuntimeProcessError.invalidConfiguration }
+                }
+                created = try owner.createWorkspace(label: edit.label, workingDirectory: edit.workingDirectory, environment: environment)
+            case let .createTab(edit): created = try owner.createTab(workspaceID: edit.workspaceID, workingDirectory: edit.workingDirectory)
             case let .splitPane(edit):
                 guard edit.direction == .right || edit.direction == .down else { throw NativeRuntimeProcessError.invalidConfiguration }
-                created = try workspaces.splitPane(paneID: edit.paneID, direction: edit.direction == .right ? .right : .down, workingDirectory: edit.workingDirectory)
-            case let .renameWorkspace(edit): try workspaces.renameWorkspace(workspaceID: edit.workspaceID, label: edit.label)
-            case let .closeWorkspace(edit): try workspaces.closeWorkspace(workspaceID: edit.workspaceID)
+                created = try owner.splitPane(paneID: edit.paneID, direction: edit.direction == .right ? .right : .down, workingDirectory: edit.workingDirectory)
+            case let .renameWorkspace(edit): try owner.renameWorkspace(workspaceID: edit.workspaceID, label: edit.label)
+            case let .closeWorkspace(edit): try owner.closeWorkspace(workspaceID: edit.workspaceID)
             case nil: throw NativeRuntimeProcessError.invalidConfiguration
             }
             var result = Northpane_Runtime_V1_WorkspaceResult()
-            result.snapshotJson = try JSONEncoder().encode(workspaces.snapshot(hostID: HostID(rawValue: id)))
+            result.snapshotJson = try JSONEncoder().encode(owner.snapshot(hostID: HostID(rawValue: id)))
             result.workspaceID = created?.workspaceID ?? ""; result.paneID = created?.paneID ?? ""
             return result
         }
+    }
+
+    private func execute(_ command: Northpane_Runtime_V1_TerminalCommand, connectionID: UUID) throws -> Northpane_Runtime_V1_TerminalResult {
+        guard let owner, owner.terminalFramesAvailable else { throw NativeRuntimeOwnerError.unsupported }
+        let view: NativeTerminalView
+        if case let .open(open) = command.operation {
+            let mode: TerminalAttachMode
+            switch open.mode { case .observe: mode = .observe; case .control: mode = .control; case .takeover: mode = .takeover; default: throw NativeRuntimeProcessError.invalidConfiguration }
+            view = try owner.open(connectionID: connectionID, paneID: open.paneID, mode: mode, columns: Int(open.columns), rows: Int(open.rows))
+        } else {
+            guard let id = UUID(uuidString: command.attachmentID) else { throw NativeRuntimeProcessError.invalidConfiguration }
+            switch command.operation {
+            case let .poll(poll):
+                guard let revision = Int(exactly: poll.afterRevision) else { throw NativeRuntimeProcessError.invalidConfiguration }
+                view = try owner.poll(connectionID: connectionID, attachmentID: id, afterRevision: revision)
+            case let .input(input):
+                try owner.input(connectionID: connectionID, attachmentID: id, bytes: input.data)
+                view = try owner.terminalStatus(connectionID: connectionID, attachmentID: id)
+            case let .resize(resize):
+                try owner.resize(connectionID: connectionID, attachmentID: id, columns: Int(resize.columns), rows: Int(resize.rows))
+                view = try owner.terminalStatus(connectionID: connectionID, attachmentID: id)
+            case let .scroll(scroll):
+                guard scroll.direction == .scrollUp || scroll.direction == .scrollDown else { throw NativeRuntimeProcessError.invalidConfiguration }
+                try owner.scroll(connectionID: connectionID, attachmentID: id, direction: scroll.direction == .scrollUp ? .up : .down, lines: Int(scroll.lines))
+                view = try owner.terminalStatus(connectionID: connectionID, attachmentID: id)
+            case .release:
+                try owner.release(connectionID: connectionID, attachmentID: id)
+                view = try owner.terminalStatus(connectionID: connectionID, attachmentID: id)
+            default: throw NativeRuntimeProcessError.invalidConfiguration
+            }
+        }
+        var result = Northpane_Runtime_V1_TerminalResult()
+        result.attachmentID = view.attachmentID.uuidString; result.processProof = view.processProof
+        result.revision = Int64(view.revision); result.frame = view.bytes
+        result.controlling = view.controlling; result.ended = view.ended
+        return result
+    }
+
+    static func agentKind(_ kind: Northpane_Runtime_V1_AgentKind) throws -> WorkspaceAgentKind {
+        switch kind { case .shell: return .shell; case .codex: return .codex; case .claude: return .claude; case .opencode: return .openCode; default: throw NativeRuntimeProcessError.invalidConfiguration }
+    }
+
+    static func agentKind(_ rawValue: String) -> Northpane_Runtime_V1_AgentKind {
+        switch rawValue { case "shell": return .shell; case "codex": return .codex; case "claude": return .claude; case "opencode": return .opencode; default: return .agentUnspecified }
     }
 
     private static func failureCode(_ error: any Error) -> String {
@@ -302,6 +387,15 @@ public final class NativeRuntimeServer: @unchecked Sendable {
         case NativeWorkspaceStoreError.unknownWorkspace: return "unknown_workspace"
         case NativeWorkspaceStoreError.unknownPane: return "unknown_pane"
         case NativeWorkspaceStoreError.limitExceeded: return "limit_exceeded"
+        case NativeRuntimeOwnerError.limitExceeded: return "limit_exceeded"
+        case NativeRuntimeOwnerError.unsupported: return "terminal_frames_unavailable"
+        case NativeRuntimeOwnerError.controlRequired: return "control_required"
+        case NativeRuntimeOwnerError.controlOwnedElsewhere: return "control_owned_elsewhere"
+        case NativeRuntimeOwnerError.attachmentMissing: return "attachment_missing"
+        case NativeRuntimeOwnerError.processExited: return "process_exited"
+        case NativeRuntimeOwnerError.invalidDimensions: return "invalid_dimensions"
+        case NativeRuntimeOwnerError.paneBusy: return "pane_busy"
+        case is PTYError: return "pty_failed"
         case NativeWorkspaceStoreError.invalidLayout: return "invalid_layout"
         case HostRuntimeError.invalidWorkingDirectory: return "invalid_working_directory"
         case NativeRuntimeProcessError.invalidConfiguration: return "invalid_operation"
@@ -355,13 +449,20 @@ public enum NativeRuntimeLauncher {
     }
 }
 
-private final class RuntimeSocket: @unchecked Sendable {
+final class RuntimeSocket: @unchecked Sendable {
     private let lock = NSLock()
+    private let descriptorLock = NSLock()
     private var descriptor: Int32
     init(descriptor: Int32) { self.descriptor = descriptor }
     deinit { close() }
     func close() {
-        lock.withLock { np_runtime_close(descriptor); descriptor = -1 }
+        // Interrupt a blocked read before waiting for the serial exchange. Keep
+        // the descriptor owned until that exchange exits, preventing fd reuse.
+        descriptorLock.withLock { if descriptor >= 0 { np_runtime_shutdown(descriptor) } }
+        lock.withLock { closeDescriptor() }
+    }
+    private func closeDescriptor() {
+        descriptorLock.withLock { if descriptor >= 0 { np_runtime_close(descriptor); descriptor = -1 } }
     }
     func exchange(_ request: Northpane_Runtime_V1_Request) throws -> Northpane_Runtime_V1_Response {
         try lock.withLock {
@@ -372,7 +473,7 @@ private final class RuntimeSocket: @unchecked Sendable {
                 return response
             } catch {
                 // A failed/partial exchange has lost framing; never continue on that stream.
-                np_runtime_close(descriptor); descriptor = -1
+                closeDescriptor()
                 throw error
             }
         }

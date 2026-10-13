@@ -9,6 +9,10 @@ message Request {
     Hello hello = 2;
     Ping ping = 3;
     WorkspaceCommand workspace = 4;
+    TerminalCommand terminal = 5;
+    StartAgent start_agent = 6;
+    Observe observe = 7;
+    PaneQuery pane_query = 8;
   }
 }
 message Hello { uint32 revision = 1; }
@@ -19,6 +23,10 @@ message Response {
     Ready ready = 2;
     Failure failure = 3;
     WorkspaceResult workspace = 4;
+    TerminalResult terminal = 5;
+    Changes changes = 6;
+    Acknowledged acknowledged = 7;
+    PaneInformation pane = 8;
   }
 }
 message Ready {
@@ -27,6 +35,7 @@ message Ready {
   string version = 3;
   int64 process_id = 4;
   bool workspace_model = 5;
+  bool terminal_frames = 6;
 }
 message Failure { string code = 1; }
 
@@ -44,7 +53,8 @@ message WorkspaceCommand {
   }
 }
 message Snapshot {}
-message CreateWorkspace { string label = 1; string working_directory = 2; }
+message EnvironmentEntry { string key = 1; string value = 2; }
+message CreateWorkspace { string label = 1; string working_directory = 2; repeated EnvironmentEntry environment = 3; }
 message CreateTab { string workspace_id = 1; string working_directory = 2; }
 enum SplitDirection { UNSPECIFIED = 0; RIGHT = 1; DOWN = 2; }
 message SplitPane { string pane_id = 1; SplitDirection direction = 2; string working_directory = 3; }
@@ -55,4 +65,47 @@ message WorkspaceResult {
   bytes snapshot_json = 1;
   string workspace_id = 2;
   string pane_id = 3;
+}
+
+// An attachment is owned by this socket connection. Closing the socket releases
+// its lease and view, never its Pane or PTY. Future output is always painted by
+// the daemon; it is not raw PTY data or a resumable Client parser checkpoint.
+message TerminalCommand {
+  string attachment_id = 1;
+  oneof operation {
+    TerminalOpen open = 2;
+    TerminalPoll poll = 3;
+    TerminalInput input = 4;
+    TerminalResize resize = 5;
+    TerminalScroll scroll = 6;
+    TerminalRelease release = 7;
+  }
+}
+enum TerminalMode { TERMINAL_MODE_UNSPECIFIED = 0; OBSERVE = 1; CONTROL = 2; TAKEOVER = 3; }
+message TerminalOpen { string pane_id = 1; TerminalMode mode = 2; uint32 columns = 3; uint32 rows = 4; }
+message TerminalPoll { int64 after_revision = 1; }
+message TerminalInput { bytes data = 1; }
+message TerminalResize { uint32 columns = 1; uint32 rows = 2; }
+enum ScrollDirection { SCROLL_UNSPECIFIED = 0; SCROLL_UP = 1; SCROLL_DOWN = 2; }
+message TerminalScroll { ScrollDirection direction = 1; uint32 lines = 2; }
+message TerminalRelease {}
+message TerminalResult {
+  string attachment_id = 1;
+  string process_proof = 2;
+  int64 revision = 3;
+  bytes frame = 4;
+  bool controlling = 5;
+  bool ended = 6;
+}
+enum AgentKind { AGENT_UNSPECIFIED = 0; SHELL = 1; CODEX = 2; CLAUDE = 3; OPENCODE = 4; }
+message StartAgent { string pane_id = 1; AgentKind kind = 2; string executable = 3; }
+message Observe {}
+message Changes { int64 revision = 1; }
+message Acknowledged {}
+message PaneQuery { string pane_id = 1; }
+message PaneInformation {
+  int64 scrollback_lines = 1;
+  AgentKind agent = 2;
+  string process_proof = 3;
+  int64 last_activity_milliseconds = 4;
 }

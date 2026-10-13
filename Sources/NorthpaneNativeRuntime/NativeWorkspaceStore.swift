@@ -33,9 +33,9 @@ final class NativeWorkspaceStore: @unchecked Sendable {
         } else { layout = NativeLayout() }
     }
 
-    func createWorkspace(label: String, workingDirectory: String) throws -> CreatedPane {
+    func createWorkspace(label: String, workingDirectory: String, preparePane: (CreatedPane) throws -> Void = { _ in }) throws -> CreatedPane {
         try validateDirectory(workingDirectory)
-        return try transact { layout in
+        return try transact(beforeCommit: preparePane) { layout in
             let number = layout.nextWorkspaceNumber
             guard number < Int.max - 1 else { throw NativeWorkspaceStoreError.limitExceeded }
             layout.nextWorkspaceNumber += 1
@@ -50,9 +50,9 @@ final class NativeWorkspaceStore: @unchecked Sendable {
         }
     }
 
-    func createTab(workspaceID: String, workingDirectory: String) throws -> CreatedPane {
+    func createTab(workspaceID: String, workingDirectory: String, preparePane: (CreatedPane) throws -> Void = { _ in }) throws -> CreatedPane {
         try validateDirectory(workingDirectory)
-        return try transact { layout in
+        return try transact(beforeCommit: preparePane) { layout in
             guard let index = layout.workspaces.firstIndex(where: { $0.id == workspaceID }) else { throw NativeWorkspaceStoreError.unknownWorkspace }
             var workspace = layout.workspaces[index]
             let paneNumber = workspace.nextPaneNumber, tabNumber = workspace.nextTabNumber
@@ -67,9 +67,9 @@ final class NativeWorkspaceStore: @unchecked Sendable {
         }
     }
 
-    func splitPane(paneID: String, direction: PaneSplitDirection, workingDirectory: String) throws -> CreatedPane {
+    func splitPane(paneID: String, direction: PaneSplitDirection, workingDirectory: String, preparePane: (CreatedPane) throws -> Void = { _ in }) throws -> CreatedPane {
         try validateDirectory(workingDirectory)
-        return try transact { layout in
+        return try transact(beforeCommit: preparePane) { layout in
             for wi in layout.workspaces.indices {
                 for ti in layout.workspaces[wi].tabs.indices {
                     let workspaceID = layout.workspaces[wi].id
@@ -131,7 +131,13 @@ final class NativeWorkspaceStore: @unchecked Sendable {
 
     func structure() -> NativeLayout { lock.withLock { layout } }
 
-    private func transact<T>(_ edit: (inout NativeLayout) throws -> T) throws -> T {
+    var currentRevision: Int { lock.withLock { revision } }
+
+    func markRuntimeChange() {
+        lock.withLock { if revision < Int.max - 1 { revision += 1 } }
+    }
+
+    private func transact<T>(beforeCommit: (T) throws -> Void = { _ in }, _ edit: (inout NativeLayout) throws -> T) throws -> T {
         try lock.withLock {
             var next = layout
             let result = try edit(&next)
@@ -139,6 +145,7 @@ final class NativeWorkspaceStore: @unchecked Sendable {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
             let data = try encoder.encode(next)
             guard data.count <= Self.maximumFileBytes, revision < Int.max - 1 else { throw NativeWorkspaceStoreError.limitExceeded }
+            try beforeCommit(result)
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: fileURL, options: .atomic)
             layout = next; revision += 1

@@ -25,7 +25,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", exact: "2.102.0"),
         .package(url: "https://github.com/apple/swift-nio-ssh.git", exact: "0.15.0"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", exact: "2.37.4"),
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.15.0"),
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", revision: "fe4fb45d5888ce33ff3788d6873870a73894a41b"),
     ],
     targets: [
         .target(name: "NorthpaneProtocol", dependencies: [.product(name: "SwiftProtobuf", package: "swift-protobuf")]),

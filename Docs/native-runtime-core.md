@@ -1,96 +1,73 @@
 # Native runtime core
 
-This module is preparation for Hosts without Herdr. The Bridge still selects
-Herdr; no native terminal attachment is enabled yet. The user-local daemon
-owns the persistent Workspace/tab/Pane graph and exposes typed shape operations
-over its private socket. Two Bridge connections observe and mutate the same
-graph; detaching them leaves the daemon and graph intact. A daemon restart
-reloads the graph with a new incarnation and never reuses closed identities.
+The native daemon owns one persistent Workspace/tab/Pane graph, live Unix PTYs,
+the authoritative terminal engine, and global terminal control leases. Separate
+Bridge connections use typed private RPCs to reach the same owner. Detaching a
+Bridge or an attachment preserves the child, history and graph. A daemon restart
+reloads the graph with a new incarnation; it does not claim to resurrect children.
 
-The additive `workspace_model` handshake capability distinguishes older
-healthy owners. A newer Bridge does not restart an older owner to gain it,
-and refuses unsupported Workspace commands before sending them. The IPC
-revision remains 1; the Client/Bridge protocol is unchanged by these operations.
-Command failures preserve the stream and do not publish an invalid mutation.
+`NativeHostRuntime` implements the same narrow `HostRuntime` interface as the
+Herdr adapter. It is available on macOS and Linux. The Bridge's default selection
+still chooses Herdr until the runtime-selection and public-handshake integration
+lands. Windows preserves Herdr support; native ConPTY is a separate milestone.
 
-## PTY ownership
+The additive `workspace_model` and `terminal_frames` readiness flags distinguish
+older healthy owners. A newer Bridge never restarts an older owner to acquire
+features. Unsupported operations fail before being sent. Private IPC revision
+remains 1; these additions do not change the Client/Bridge protocol. Rejected
+commands preserve framing and do not publish partial graph mutations.
 
-`PTYProcess` owns a Unix child and its controlling terminal. `NorthpanePTY`
-prepares arguments in the parent, calls `forkpty`, and uses only C/POSIX calls
-between fork and exec. An exec-error pipe makes a missing executable or working
-directory a synchronous error rather than a successful launch followed by an
-unexplained exit. Inherited descriptors are closed; signal masks and handlers
-are reset before exec.
+## Process and lease ownership
 
-The dedicated reader drains output before reporting exit and reaps the child
-with `waitpid`. Linux PTY `EIO` is treated as EOF. Input handles short writes and
-backpressure; resize uses `TIOCSWINSZ`. Explicit Pane closure escalates from TERM
-to KILL after two seconds. Client detach must leave the PTY owner alone.
-Persistence across Bridge/SSH process exit requires the separate runtime
-daemon. Its lifecycle and user-service setup exist; PTY ownership by that
-daemon is the next integration step.
+`PTYProcess` uses Northpane's C/POSIX `forkpty` shim. Arguments are prepared before
+fork, an exec-error pipe reports invalid paths synchronously, inherited descriptors
+are closed, and signal masks/handlers are reset. A dedicated reader drains output
+before exit and reaps the child. Linux PTY `EIO` is EOF. Explicit Workspace closure
+escalates TERM to KILL after two seconds; connection detach never terminates it.
 
-Windows compiles the terminal engine and replay tests but does not yet provide
-ConPTY. No Unix process API is exposed there.
+The owner serializes graph, emulator, metadata and lease mutations. Reader callbacks
+apply backpressure rather than queueing an unbounded transcript. Input writes stay
+outside the emulator queue so a slow child can still drain its output. Connection-
+scoped attachment tokens and unique process-birth proofs reject stale input after
+replacement. Takeover revokes the previous global controller, including controllers
+in another Bridge process. Observers can page their own history view but cannot send
+input or resize the process. Counts, grid dimensions and RPC payloads are bounded.
 
-## Terminal engine decision
+Only graph shape and launch directories are persisted. Environment values, terminal
+contents and credentials are not written to the layout file. Agent status remains
+`unknown` until a trusted status integration supplies evidence; terminal output is
+not evidence that an agent is blocked or waiting for input.
 
-SwiftTerm is pinned to **1.15.0**, matching the app's existing dependency. Its
-portable `Terminal` is used directly; Northpane does not use `LocalProcess` or
-`HeadlessTerminal`. The dependency itself also compiles Apple UI sources on a
-Mac; none of that UI is Northpane product source or used by the Bridge. On Linux
-and Windows its manifest excludes the Apple UI directories.
+## Authoritative painted frames
 
-The Static Linux SDK uses Musl rather than Glibc. The 1.15 engine imports Glibc
-unconditionally in `KittyGraphics.swift`. `build-static-linux.sh` applies the
-small patches in `Patches/` through `prepare-swiftterm-musl.sh`.
-The helper checks the exact revision and the full input-file SHA-256 and is
-idempotent for the second architecture. Unknown source files fail the build;
-The patches select the available libc and exclude unused upstream PTY/process
-and Apple UI wrappers when building for musl. Northpane uses its own C PTY
-shim; the upstream wrappers assume Glibc's Swift ioctl overlays. The manifest
-patch also permits a musl build hosted on macOS. Terminal behavior is unchanged. Direct
-musl builds must run that helper first.
+SwiftTerm is pinned to upstream commit
+`fe4fb45d5888ce33ff3788d6873870a73894a41b`, coordinated with the Client dependency.
+Its public owned render snapshot supplies cells, soft-wrap flags, DEC line modes,
+colors and palette. Northpane uses the portable engine, never upstream process/UI
+wrappers. No Northpane app UI source lives in this repository.
 
-The checked 1.20.0 manifest includes `SwiftTermBuildInfoPlugin` and does not
-provide a portable render snapshot. Current main requires newer tools and has
-additional graphics dependencies. Its `TerminalRenderSnapshot` exposes wraps
-and rendering state, but is not a complete resumable terminal checkpoint.
+Only the Host receives raw PTY bytes and answers terminal queries. Each attachment
+receives a complete painted view, followed by further painted views. This is not a
+resumable parser checkpoint: fragmented UTF-8, CSI/OSC state, saved cursors and
+charsets remain in the authoritative Host engine. No parser continuation is replayed
+on the Client. The initial paint resets the Client; subsequent paints reuse its
+buffer, preserving a selection whose cells remain unchanged. Soft wraps use real
+autowrap, null cells remain null, Unicode wide cells and OSC 8 links are preserved,
+and input-encoding modes are explicitly updated. Alternate screens and Host history
+pages are painted without moving the Host cursor. A slow consumer sees coalesced
+frames; there is no disconnected output queue to replay.
 
-Primary sources:
+The former experimental `TerminalViewport` checkpoint probe has been retired. Its
+continuation tests do not describe the production seam. `NativeTerminalPaintTests`
+checks the actual frame contract, including wraps/copy/reflow, palette/reverse video,
+DEC double lines, links, fragmented parser input and recorded shell/vim/less output.
+Graphics and real agent-UI certification remain outside these textual fixtures.
 
-- [SwiftTerm 1.15 manifest](https://github.com/migueldeicaza/SwiftTerm/blob/v1.15.0/Package.swift)
-- [SwiftTerm 1.20 manifest](https://github.com/migueldeicaza/SwiftTerm/blob/v1.20.0/Package.swift)
-- [Portable render snapshot](https://github.com/migueldeicaza/SwiftTerm/blob/main/Sources/SwiftTerm/Portable/TerminalRenderSnapshot.swift)
-- [forkpty semantics](https://www.man7.org/linux/man-pages/man3/openpty.3.html)
+The pinned upstream source supports Musl directly. The static-build helper verifies
+the revision and rejects local changes; historical 1.15 patches are not applied.
+`SWIFTTERM_EXCLUDE_APPLE=1` excludes Apple sources when cross-compiling from macOS.
 
-## Replay feasibility and remaining gate
-
-`TerminalViewport` is **internal and experimental**. It reproduces visible
-cells, Unicode graphemes and wide cells, SGR attributes, titles, cursor style
-and visibility, basic modes, mouse selection, margins and both visible buffers.
-It retains references to SwiftTerm's buffers through activation callbacks; it
-does not switch the live terminal during serialization. Reprinting the final
-leading cell restores pending autowrap. Incomplete CSI, bounded string payloads
-and UTF-8 tails are appended to replay so subsequent bytes can complete them.
-
-Synthetic tests and recorded shell/vim/less output compare cells and cursor,
-then feed the same subsequent bytes to the original and replayed terminal.
-Regression tests also demonstrate two unresolved differences:
-
-- Scrollback is retained by the Host emulator but not transferred by replay.
-- Soft-wrap flags are not public in 1.15. Replayed cells look identical, but
-  resizing can reflow them differently.
-
-Before enabling attachments, implement Host scroll views and preserve wrap
-metadata (through an appropriate engine API or independently verified adapter).
-Also cover saved modes, charsets, tab stops, OSC 8, palettes, graphics and
-keyboard protocols. String sequences above 64 KiB and CSI above 1 KiB are
-bounded by the probe and are not guaranteed to resume. A Client must not
-generate duplicate terminal-query replies alongside the Host emulator.
-
-Agent UI and htop recordings remain outstanding. A successful viewport test
-must never be described as a complete terminal checkpoint or agent certification.
+Primary source: [pinned SwiftTerm render snapshot](https://github.com/migueldeicaza/SwiftTerm/blob/fe4fb45d5888ce33ff3788d6873870a73894a41b/Sources/SwiftTerm/Portable/TerminalRenderSnapshot.swift).
 
 ## Verification
 
@@ -99,16 +76,15 @@ swift test --jobs 2
 NORTHPANE_TERMINAL_BENCHMARK=1 swift test --jobs 2 --filter PTYProcessTests
 ```
 
-The default PTY stress test checks every byte of 50 MiB of output without
-retaining a transcript. The opt-in emulator benchmark parses 50 MiB of text,
-checks the retained history bound and compares the resulting viewport. Both
-report elapsed time, test-process CPU and peak RSS; these are measurements of
-the test harness, not production-service memory guarantees.
+Owner, socket and adapter tests use temporary homes and synthetic local processes.
+They cover lease takeover, observer isolation, detach/reconnect continuity, process
+replacement, rejected launches, graph durability and owner exit. They never use real
+operator sessions or provider accounts. The PTY stress test validates every byte of
+50 MiB without storing a transcript; the optional emulator benchmark measures parsing
+and bounded retained history. Those are harness measurements, not production memory
+guarantees.
 
-Local corpus recording is opt-in via `NORTHPANE_TERMINAL_CORPUS` (a JSON mapping
-of labels to executable paths) and `NORTHPANE_TERMINAL_CORPUS_OUTPUT` (a temporary
-output directory). It creates an empty home, supplies a minimal environment,
-answers terminal queries and terminates each process. Review the bytes for
-private identifiers before copying recordings into fixtures. Running external
-agent CLIs additionally requires explicit operator authorization: an empty
-home alone does not guarantee absence of Keychain access or external requests.
+Opt-in corpus recording uses `NORTHPANE_TERMINAL_CORPUS` and
+`NORTHPANE_TERMINAL_CORPUS_OUTPUT`. Review recordings for private identifiers before
+adding fixtures. External agent CLIs require explicit operator authorization: an
+empty home does not establish absence of Keychain access or external requests.

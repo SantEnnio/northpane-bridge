@@ -17,9 +17,16 @@ import Musl
         URL(fileURLWithPath: "/tmp/np-" + UUID().uuidString.prefix(12), isDirectory: true)
     }
 
-    private func withServer(workspaceModelEnabled: Bool = true, _ body: (URL, NativeRuntimeServer) async throws -> Void) async throws {
+    private func withServer(workspaceModelEnabled: Bool = true, liveProcesses: Bool = false, _ body: (URL, NativeRuntimeServer) async throws -> Void) async throws {
         let directory = temporary()
-        let server = try NativeRuntimeServer(stateDirectory: directory, version: "test", workspaceModelEnabled: workspaceModelEnabled)
+        let configuration: NativeProcessConfiguration?
+        if liveProcesses {
+            let home = directory.appending(path: "home")
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            configuration = NativeProcessConfiguration(shell: "/bin/sh", arguments: ["-i"],
+                environment: ["HOME": home.path, "ENV": "/dev/null", "PATH": "/usr/bin:/bin", "PS1": "probe$ "])
+        } else { configuration = nil }
+        let server = try NativeRuntimeServer(stateDirectory: directory, version: "test", workspaceModelEnabled: workspaceModelEnabled, processConfiguration: configuration)
         // run() owns a blocking accept loop. A detached Swift task still runs
         // on the cooperative pool and starves async clients on small runners.
         let completed = AsyncStream<Result<Void, any Error>>.makeStream()
@@ -39,6 +46,45 @@ import Musl
             throw error
         }
         try FileManager.default.removeItem(at: directory)
+    }
+
+    @Test func terminalIpcOwnsTheSamePtyAcrossDisconnectedBridgeConnections() async throws {
+        try await withServer(liveProcesses: true) { directory, _ in
+            let first = try await NativeRuntimeConnection.connect(stateDirectory: directory)
+            let second = try await NativeRuntimeConnection.connect(stateDirectory: directory)
+            defer { first.close(); second.close() }
+            #expect(first.status.terminalFrames)
+            let host = HostID(rawValue: UUID())
+            let pane = try await first.createWorkspace(hostID: host, label: "Project", workingDirectory: directory.path)
+            let a = try first.openTerminal(paneID: pane.paneID, mode: .control, columns: 80, rows: 24)
+            let observer = try second.openTerminal(paneID: pane.paneID, mode: .observe, columns: 40, rows: 12)
+            #expect(observer.processProof == a.processProof && !observer.controlling)
+            #expect(throws: NativeRuntimeProcessError.rejected("control_required")) {
+                try second.inputTerminal(attachmentID: observer.attachmentID, bytes: Data("must not arrive".utf8))
+            }
+            try first.inputTerminal(attachmentID: a.attachmentID, bytes: Data("printf '\\151\\160\\143\\055\\162\\145\\163\\165\\154\\164\\012'\r".utf8))
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+            var received = false
+            repeat {
+                let view = try first.pollTerminal(attachmentID: a.attachmentID, afterRevision: -1)
+                if String(decoding: view.bytes, as: UTF8.self).contains("ipc-result") { received = true; break }
+                try await Task.sleep(for: .milliseconds(20))
+            } while ContinuousClock.now < deadline
+            #expect(received)
+            first.close()
+            let releaseDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+            var reopened: NativeTerminalView?
+            repeat {
+                do { reopened = try second.openTerminal(paneID: pane.paneID, mode: .control, columns: 80, rows: 24) }
+                catch NativeRuntimeProcessError.rejected("control_owned_elsewhere") { try await Task.sleep(for: .milliseconds(10)) }
+            } while reopened == nil && ContinuousClock.now < releaseDeadline
+            let b = try #require(reopened)
+            #expect(b.processProof == a.processProof && !b.ended)
+            #expect(String(decoding: b.bytes, as: UTF8.self).contains("ipc-result"))
+            #expect(try second.observedRevision() > 0)
+            #expect(try await second.paneInformation(paneID: pane.paneID).lastActivity != nil)
+            try await second.closeWorkspace(hostID: host, workspaceID: pane.workspaceID)
+        }
     }
 
     @Test func workspaceGraphIsSharedPersistedAndSurvivesClientDetach() async throws {
@@ -234,7 +280,8 @@ import Musl
         try await Task.detached {
             let process = Process(), output = Pipe()
             process.executableURL = executable; process.arguments = ["runtime", argument]
-            process.environment = ["NORTHPANE_STATE_DIRECTORY": directory.path, "PATH": "/usr/bin:/bin"]
+            process.environment = ["NORTHPANE_STATE_DIRECTORY": directory.path, "PATH": "/usr/bin:/bin",
+                "HOME": directory.appending(path: "home").path, "SHELL": "/bin/sh", "ENV": "/dev/null", "PS1": "probe$ "]
             process.standardInput = FileHandle.nullDevice
             process.standardOutput = output; process.standardError = FileHandle.nullDevice
             try process.run()

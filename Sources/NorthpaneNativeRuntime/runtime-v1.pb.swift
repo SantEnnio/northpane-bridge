@@ -63,6 +63,132 @@ nonisolated enum Northpane_Runtime_V1_SplitDirection: SwiftProtobuf.Enum, Swift.
 
 }
 
+nonisolated enum Northpane_Runtime_V1_TerminalMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  typealias RawValue = Int
+  case unspecified // = 0
+  case observe // = 1
+  case control // = 2
+  case takeover // = 3
+  case UNRECOGNIZED(Int)
+
+  init() {
+    self = .unspecified
+  }
+
+  init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .observe
+    case 2: self = .control
+    case 3: self = .takeover
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .observe: return 1
+    case .control: return 2
+    case .takeover: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  static let allCases: [Northpane_Runtime_V1_TerminalMode] = [
+    .unspecified,
+    .observe,
+    .control,
+    .takeover,
+  ]
+
+}
+
+nonisolated enum Northpane_Runtime_V1_ScrollDirection: SwiftProtobuf.Enum, Swift.CaseIterable {
+  typealias RawValue = Int
+  case scrollUnspecified // = 0
+  case scrollUp // = 1
+  case scrollDown // = 2
+  case UNRECOGNIZED(Int)
+
+  init() {
+    self = .scrollUnspecified
+  }
+
+  init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .scrollUnspecified
+    case 1: self = .scrollUp
+    case 2: self = .scrollDown
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  var rawValue: Int {
+    switch self {
+    case .scrollUnspecified: return 0
+    case .scrollUp: return 1
+    case .scrollDown: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  static let allCases: [Northpane_Runtime_V1_ScrollDirection] = [
+    .scrollUnspecified,
+    .scrollUp,
+    .scrollDown,
+  ]
+
+}
+
+nonisolated enum Northpane_Runtime_V1_AgentKind: SwiftProtobuf.Enum, Swift.CaseIterable {
+  typealias RawValue = Int
+  case agentUnspecified // = 0
+  case shell // = 1
+  case codex // = 2
+  case claude // = 3
+  case opencode // = 4
+  case UNRECOGNIZED(Int)
+
+  init() {
+    self = .agentUnspecified
+  }
+
+  init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .agentUnspecified
+    case 1: self = .shell
+    case 2: self = .codex
+    case 3: self = .claude
+    case 4: self = .opencode
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  var rawValue: Int {
+    switch self {
+    case .agentUnspecified: return 0
+    case .shell: return 1
+    case .codex: return 2
+    case .claude: return 3
+    case .opencode: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  static let allCases: [Northpane_Runtime_V1_AgentKind] = [
+    .agentUnspecified,
+    .shell,
+    .codex,
+    .claude,
+    .opencode,
+  ]
+
+}
+
 /// User-local IPC only. Independent of the public Client/Bridge schema.
 /// Each message is preceded by a four-byte unsigned big-endian length.
 nonisolated struct Northpane_Runtime_V1_Request: Sendable {
@@ -98,12 +224,48 @@ nonisolated struct Northpane_Runtime_V1_Request: Sendable {
     set {operation = .workspace(newValue)}
   }
 
+  var terminal: Northpane_Runtime_V1_TerminalCommand {
+    get {
+      if case .terminal(let v)? = operation {return v}
+      return Northpane_Runtime_V1_TerminalCommand()
+    }
+    set {operation = .terminal(newValue)}
+  }
+
+  var startAgent: Northpane_Runtime_V1_StartAgent {
+    get {
+      if case .startAgent(let v)? = operation {return v}
+      return Northpane_Runtime_V1_StartAgent()
+    }
+    set {operation = .startAgent(newValue)}
+  }
+
+  var observe: Northpane_Runtime_V1_Observe {
+    get {
+      if case .observe(let v)? = operation {return v}
+      return Northpane_Runtime_V1_Observe()
+    }
+    set {operation = .observe(newValue)}
+  }
+
+  var paneQuery: Northpane_Runtime_V1_PaneQuery {
+    get {
+      if case .paneQuery(let v)? = operation {return v}
+      return Northpane_Runtime_V1_PaneQuery()
+    }
+    set {operation = .paneQuery(newValue)}
+  }
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   nonisolated enum OneOf_Operation: Equatable, Sendable {
     case hello(Northpane_Runtime_V1_Hello)
     case ping(Northpane_Runtime_V1_Ping)
     case workspace(Northpane_Runtime_V1_WorkspaceCommand)
+    case terminal(Northpane_Runtime_V1_TerminalCommand)
+    case startAgent(Northpane_Runtime_V1_StartAgent)
+    case observe(Northpane_Runtime_V1_Observe)
+    case paneQuery(Northpane_Runtime_V1_PaneQuery)
 
   }
 
@@ -165,12 +327,48 @@ nonisolated struct Northpane_Runtime_V1_Response: Sendable {
     set {outcome = .workspace(newValue)}
   }
 
+  var terminal: Northpane_Runtime_V1_TerminalResult {
+    get {
+      if case .terminal(let v)? = outcome {return v}
+      return Northpane_Runtime_V1_TerminalResult()
+    }
+    set {outcome = .terminal(newValue)}
+  }
+
+  var changes: Northpane_Runtime_V1_Changes {
+    get {
+      if case .changes(let v)? = outcome {return v}
+      return Northpane_Runtime_V1_Changes()
+    }
+    set {outcome = .changes(newValue)}
+  }
+
+  var acknowledged: Northpane_Runtime_V1_Acknowledged {
+    get {
+      if case .acknowledged(let v)? = outcome {return v}
+      return Northpane_Runtime_V1_Acknowledged()
+    }
+    set {outcome = .acknowledged(newValue)}
+  }
+
+  var pane: Northpane_Runtime_V1_PaneInformation {
+    get {
+      if case .pane(let v)? = outcome {return v}
+      return Northpane_Runtime_V1_PaneInformation()
+    }
+    set {outcome = .pane(newValue)}
+  }
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   nonisolated enum OneOf_Outcome: Equatable, Sendable {
     case ready(Northpane_Runtime_V1_Ready)
     case failure(Northpane_Runtime_V1_Failure)
     case workspace(Northpane_Runtime_V1_WorkspaceResult)
+    case terminal(Northpane_Runtime_V1_TerminalResult)
+    case changes(Northpane_Runtime_V1_Changes)
+    case acknowledged(Northpane_Runtime_V1_Acknowledged)
+    case pane(Northpane_Runtime_V1_PaneInformation)
 
   }
 
@@ -191,6 +389,8 @@ nonisolated struct Northpane_Runtime_V1_Ready: Sendable {
   var processID: Int64 = 0
 
   var workspaceModel: Bool = false
+
+  var terminalFrames: Bool = false
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -293,6 +493,20 @@ nonisolated struct Northpane_Runtime_V1_Snapshot: Sendable {
   init() {}
 }
 
+nonisolated struct Northpane_Runtime_V1_EnvironmentEntry: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var key: String = String()
+
+  var value: String = String()
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
 nonisolated struct Northpane_Runtime_V1_CreateWorkspace: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -301,6 +515,8 @@ nonisolated struct Northpane_Runtime_V1_CreateWorkspace: Sendable {
   var label: String = String()
 
   var workingDirectory: String = String()
+
+  var environment: [Northpane_Runtime_V1_EnvironmentEntry] = []
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -380,6 +596,261 @@ nonisolated struct Northpane_Runtime_V1_WorkspaceResult: Sendable {
   init() {}
 }
 
+/// An attachment is owned by this socket connection. Closing the socket releases
+/// its lease and view, never its Pane or PTY. Future output is always painted by
+/// the daemon; it is not raw PTY data or a resumable Client parser checkpoint.
+nonisolated struct Northpane_Runtime_V1_TerminalCommand: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var attachmentID: String = String()
+
+  var operation: Northpane_Runtime_V1_TerminalCommand.OneOf_Operation? = nil
+
+  var `open`: Northpane_Runtime_V1_TerminalOpen {
+    get {
+      if case .open(let v)? = operation {return v}
+      return Northpane_Runtime_V1_TerminalOpen()
+    }
+    set {operation = .open(newValue)}
+  }
+
+  var poll: Northpane_Runtime_V1_TerminalPoll {
+    get {
+      if case .poll(let v)? = operation {return v}
+      return Northpane_Runtime_V1_TerminalPoll()
+    }
+    set {operation = .poll(newValue)}
+  }
+
+  var input: Northpane_Runtime_V1_TerminalInput {
+    get {
+      if case .input(let v)? = operation {return v}
+      return Northpane_Runtime_V1_TerminalInput()
+    }
+    set {operation = .input(newValue)}
+  }
+
+  var resize: Northpane_Runtime_V1_TerminalResize {
+    get {
+      if case .resize(let v)? = operation {return v}
+      return Northpane_Runtime_V1_TerminalResize()
+    }
+    set {operation = .resize(newValue)}
+  }
+
+  var scroll: Northpane_Runtime_V1_TerminalScroll {
+    get {
+      if case .scroll(let v)? = operation {return v}
+      return Northpane_Runtime_V1_TerminalScroll()
+    }
+    set {operation = .scroll(newValue)}
+  }
+
+  var release: Northpane_Runtime_V1_TerminalRelease {
+    get {
+      if case .release(let v)? = operation {return v}
+      return Northpane_Runtime_V1_TerminalRelease()
+    }
+    set {operation = .release(newValue)}
+  }
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  nonisolated enum OneOf_Operation: Equatable, Sendable {
+    case `open`(Northpane_Runtime_V1_TerminalOpen)
+    case poll(Northpane_Runtime_V1_TerminalPoll)
+    case input(Northpane_Runtime_V1_TerminalInput)
+    case resize(Northpane_Runtime_V1_TerminalResize)
+    case scroll(Northpane_Runtime_V1_TerminalScroll)
+    case release(Northpane_Runtime_V1_TerminalRelease)
+
+  }
+
+  init() {}
+}
+
+nonisolated struct Northpane_Runtime_V1_TerminalOpen: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var paneID: String = String()
+
+  var mode: Northpane_Runtime_V1_TerminalMode = .unspecified
+
+  var columns: UInt32 = 0
+
+  var rows: UInt32 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Northpane_Runtime_V1_TerminalPoll: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var afterRevision: Int64 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Northpane_Runtime_V1_TerminalInput: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var data: Data = Data()
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Northpane_Runtime_V1_TerminalResize: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var columns: UInt32 = 0
+
+  var rows: UInt32 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Northpane_Runtime_V1_TerminalScroll: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var direction: Northpane_Runtime_V1_ScrollDirection = .scrollUnspecified
+
+  var lines: UInt32 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Northpane_Runtime_V1_TerminalRelease: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Northpane_Runtime_V1_TerminalResult: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var attachmentID: String = String()
+
+  var processProof: String = String()
+
+  var revision: Int64 = 0
+
+  var frame: Data = Data()
+
+  var controlling: Bool = false
+
+  var ended: Bool = false
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Northpane_Runtime_V1_StartAgent: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var paneID: String = String()
+
+  var kind: Northpane_Runtime_V1_AgentKind = .agentUnspecified
+
+  var executable: String = String()
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Northpane_Runtime_V1_Observe: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Northpane_Runtime_V1_Changes: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var revision: Int64 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Northpane_Runtime_V1_Acknowledged: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Northpane_Runtime_V1_PaneQuery: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var paneID: String = String()
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Northpane_Runtime_V1_PaneInformation: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var scrollbackLines: Int64 = 0
+
+  var agent: Northpane_Runtime_V1_AgentKind = .agentUnspecified
+
+  var processProof: String = String()
+
+  var lastActivityMilliseconds: Int64 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "northpane.runtime.v1"
@@ -388,9 +859,21 @@ nonisolated extension Northpane_Runtime_V1_SplitDirection: SwiftProtobuf._ProtoN
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0UNSPECIFIED\0\u{1}RIGHT\0\u{1}DOWN\0")
 }
 
+nonisolated extension Northpane_Runtime_V1_TerminalMode: SwiftProtobuf._ProtoNameProviding {
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0TERMINAL_MODE_UNSPECIFIED\0\u{1}OBSERVE\0\u{1}CONTROL\0\u{1}TAKEOVER\0")
+}
+
+nonisolated extension Northpane_Runtime_V1_ScrollDirection: SwiftProtobuf._ProtoNameProviding {
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SCROLL_UNSPECIFIED\0\u{1}SCROLL_UP\0\u{1}SCROLL_DOWN\0")
+}
+
+nonisolated extension Northpane_Runtime_V1_AgentKind: SwiftProtobuf._ProtoNameProviding {
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_UNSPECIFIED\0\u{1}SHELL\0\u{1}CODEX\0\u{1}CLAUDE\0\u{1}OPENCODE\0")
+}
+
 nonisolated extension Northpane_Runtime_V1_Request: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".Request"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}hello\0\u{1}ping\0\u{1}workspace\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}hello\0\u{1}ping\0\u{1}workspace\0\u{1}terminal\0\u{3}start_agent\0\u{1}observe\0\u{3}pane_query\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -438,6 +921,58 @@ nonisolated extension Northpane_Runtime_V1_Request: SwiftProtobuf.Message, Swift
           self.operation = .workspace(v)
         }
       }()
+      case 5: try {
+        var v: Northpane_Runtime_V1_TerminalCommand?
+        var hadOneofValue = false
+        if let current = self.operation {
+          hadOneofValue = true
+          if case .terminal(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.operation = .terminal(v)
+        }
+      }()
+      case 6: try {
+        var v: Northpane_Runtime_V1_StartAgent?
+        var hadOneofValue = false
+        if let current = self.operation {
+          hadOneofValue = true
+          if case .startAgent(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.operation = .startAgent(v)
+        }
+      }()
+      case 7: try {
+        var v: Northpane_Runtime_V1_Observe?
+        var hadOneofValue = false
+        if let current = self.operation {
+          hadOneofValue = true
+          if case .observe(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.operation = .observe(v)
+        }
+      }()
+      case 8: try {
+        var v: Northpane_Runtime_V1_PaneQuery?
+        var hadOneofValue = false
+        if let current = self.operation {
+          hadOneofValue = true
+          if case .paneQuery(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.operation = .paneQuery(v)
+        }
+      }()
       default: break
       }
     }
@@ -463,6 +998,22 @@ nonisolated extension Northpane_Runtime_V1_Request: SwiftProtobuf.Message, Swift
     case .workspace?: try {
       guard case .workspace(let v)? = self.operation else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    }()
+    case .terminal?: try {
+      guard case .terminal(let v)? = self.operation else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    }()
+    case .startAgent?: try {
+      guard case .startAgent(let v)? = self.operation else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+    }()
+    case .observe?: try {
+      guard case .observe(let v)? = self.operation else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+    }()
+    case .paneQuery?: try {
+      guard case .paneQuery(let v)? = self.operation else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
     }()
     case nil: break
     }
@@ -528,7 +1079,7 @@ nonisolated extension Northpane_Runtime_V1_Ping: SwiftProtobuf.Message, SwiftPro
 
 nonisolated extension Northpane_Runtime_V1_Response: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".Response"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}ready\0\u{1}failure\0\u{1}workspace\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}ready\0\u{1}failure\0\u{1}workspace\0\u{1}terminal\0\u{1}changes\0\u{1}acknowledged\0\u{1}pane\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -576,6 +1127,58 @@ nonisolated extension Northpane_Runtime_V1_Response: SwiftProtobuf.Message, Swif
           self.outcome = .workspace(v)
         }
       }()
+      case 5: try {
+        var v: Northpane_Runtime_V1_TerminalResult?
+        var hadOneofValue = false
+        if let current = self.outcome {
+          hadOneofValue = true
+          if case .terminal(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.outcome = .terminal(v)
+        }
+      }()
+      case 6: try {
+        var v: Northpane_Runtime_V1_Changes?
+        var hadOneofValue = false
+        if let current = self.outcome {
+          hadOneofValue = true
+          if case .changes(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.outcome = .changes(v)
+        }
+      }()
+      case 7: try {
+        var v: Northpane_Runtime_V1_Acknowledged?
+        var hadOneofValue = false
+        if let current = self.outcome {
+          hadOneofValue = true
+          if case .acknowledged(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.outcome = .acknowledged(v)
+        }
+      }()
+      case 8: try {
+        var v: Northpane_Runtime_V1_PaneInformation?
+        var hadOneofValue = false
+        if let current = self.outcome {
+          hadOneofValue = true
+          if case .pane(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.outcome = .pane(v)
+        }
+      }()
       default: break
       }
     }
@@ -602,6 +1205,22 @@ nonisolated extension Northpane_Runtime_V1_Response: SwiftProtobuf.Message, Swif
       guard case .workspace(let v)? = self.outcome else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
     }()
+    case .terminal?: try {
+      guard case .terminal(let v)? = self.outcome else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    }()
+    case .changes?: try {
+      guard case .changes(let v)? = self.outcome else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+    }()
+    case .acknowledged?: try {
+      guard case .acknowledged(let v)? = self.outcome else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+    }()
+    case .pane?: try {
+      guard case .pane(let v)? = self.outcome else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+    }()
     case nil: break
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -617,7 +1236,7 @@ nonisolated extension Northpane_Runtime_V1_Response: SwiftProtobuf.Message, Swif
 
 nonisolated extension Northpane_Runtime_V1_Ready: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".Ready"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}revision\0\u{1}incarnation\0\u{1}version\0\u{3}process_id\0\u{3}workspace_model\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}revision\0\u{1}incarnation\0\u{1}version\0\u{3}process_id\0\u{3}workspace_model\0\u{3}terminal_frames\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -630,6 +1249,7 @@ nonisolated extension Northpane_Runtime_V1_Ready: SwiftProtobuf.Message, SwiftPr
       case 3: try { try decoder.decodeSingularStringField(value: &self.version) }()
       case 4: try { try decoder.decodeSingularInt64Field(value: &self.processID) }()
       case 5: try { try decoder.decodeSingularBoolField(value: &self.workspaceModel) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.terminalFrames) }()
       default: break
       }
     }
@@ -651,6 +1271,9 @@ nonisolated extension Northpane_Runtime_V1_Ready: SwiftProtobuf.Message, SwiftPr
     if self.workspaceModel != false {
       try visitor.visitSingularBoolField(value: self.workspaceModel, fieldNumber: 5)
     }
+    if self.terminalFrames != false {
+      try visitor.visitSingularBoolField(value: self.terminalFrames, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -660,6 +1283,7 @@ nonisolated extension Northpane_Runtime_V1_Ready: SwiftProtobuf.Message, SwiftPr
     if lhs.version != rhs.version {return false}
     if lhs.processID != rhs.processID {return false}
     if lhs.workspaceModel != rhs.workspaceModel {return false}
+    if lhs.terminalFrames != rhs.terminalFrames {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -854,9 +1478,44 @@ nonisolated extension Northpane_Runtime_V1_Snapshot: SwiftProtobuf.Message, Swif
   }
 }
 
+nonisolated extension Northpane_Runtime_V1_EnvironmentEntry: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".EnvironmentEntry"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}key\0\u{1}value\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.key) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.value) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.key.isEmpty {
+      try visitor.visitSingularStringField(value: self.key, fieldNumber: 1)
+    }
+    if !self.value.isEmpty {
+      try visitor.visitSingularStringField(value: self.value, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_EnvironmentEntry, rhs: Northpane_Runtime_V1_EnvironmentEntry) -> Bool {
+    if lhs.key != rhs.key {return false}
+    if lhs.value != rhs.value {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Northpane_Runtime_V1_CreateWorkspace: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".CreateWorkspace"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}label\0\u{3}working_directory\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}label\0\u{3}working_directory\0\u{1}environment\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -866,6 +1525,7 @@ nonisolated extension Northpane_Runtime_V1_CreateWorkspace: SwiftProtobuf.Messag
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.label) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.workingDirectory) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.environment) }()
       default: break
       }
     }
@@ -878,12 +1538,16 @@ nonisolated extension Northpane_Runtime_V1_CreateWorkspace: SwiftProtobuf.Messag
     if !self.workingDirectory.isEmpty {
       try visitor.visitSingularStringField(value: self.workingDirectory, fieldNumber: 2)
     }
+    if !self.environment.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.environment, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   static func ==(lhs: Northpane_Runtime_V1_CreateWorkspace, rhs: Northpane_Runtime_V1_CreateWorkspace) -> Bool {
     if lhs.label != rhs.label {return false}
     if lhs.workingDirectory != rhs.workingDirectory {return false}
+    if lhs.environment != rhs.environment {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1064,6 +1728,578 @@ nonisolated extension Northpane_Runtime_V1_WorkspaceResult: SwiftProtobuf.Messag
     if lhs.snapshotJson != rhs.snapshotJson {return false}
     if lhs.workspaceID != rhs.workspaceID {return false}
     if lhs.paneID != rhs.paneID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_TerminalCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".TerminalCommand"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}attachment_id\0\u{1}open\0\u{1}poll\0\u{1}input\0\u{1}resize\0\u{1}scroll\0\u{1}release\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.attachmentID) }()
+      case 2: try {
+        var v: Northpane_Runtime_V1_TerminalOpen?
+        var hadOneofValue = false
+        if let current = self.operation {
+          hadOneofValue = true
+          if case .open(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.operation = .open(v)
+        }
+      }()
+      case 3: try {
+        var v: Northpane_Runtime_V1_TerminalPoll?
+        var hadOneofValue = false
+        if let current = self.operation {
+          hadOneofValue = true
+          if case .poll(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.operation = .poll(v)
+        }
+      }()
+      case 4: try {
+        var v: Northpane_Runtime_V1_TerminalInput?
+        var hadOneofValue = false
+        if let current = self.operation {
+          hadOneofValue = true
+          if case .input(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.operation = .input(v)
+        }
+      }()
+      case 5: try {
+        var v: Northpane_Runtime_V1_TerminalResize?
+        var hadOneofValue = false
+        if let current = self.operation {
+          hadOneofValue = true
+          if case .resize(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.operation = .resize(v)
+        }
+      }()
+      case 6: try {
+        var v: Northpane_Runtime_V1_TerminalScroll?
+        var hadOneofValue = false
+        if let current = self.operation {
+          hadOneofValue = true
+          if case .scroll(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.operation = .scroll(v)
+        }
+      }()
+      case 7: try {
+        var v: Northpane_Runtime_V1_TerminalRelease?
+        var hadOneofValue = false
+        if let current = self.operation {
+          hadOneofValue = true
+          if case .release(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.operation = .release(v)
+        }
+      }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.attachmentID.isEmpty {
+      try visitor.visitSingularStringField(value: self.attachmentID, fieldNumber: 1)
+    }
+    switch self.operation {
+    case .open?: try {
+      guard case .open(let v)? = self.operation else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    }()
+    case .poll?: try {
+      guard case .poll(let v)? = self.operation else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    }()
+    case .input?: try {
+      guard case .input(let v)? = self.operation else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    }()
+    case .resize?: try {
+      guard case .resize(let v)? = self.operation else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    }()
+    case .scroll?: try {
+      guard case .scroll(let v)? = self.operation else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+    }()
+    case .release?: try {
+      guard case .release(let v)? = self.operation else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+    }()
+    case nil: break
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_TerminalCommand, rhs: Northpane_Runtime_V1_TerminalCommand) -> Bool {
+    if lhs.attachmentID != rhs.attachmentID {return false}
+    if lhs.operation != rhs.operation {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_TerminalOpen: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".TerminalOpen"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}pane_id\0\u{1}mode\0\u{1}columns\0\u{1}rows\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.paneID) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.mode) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.columns) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.rows) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.paneID.isEmpty {
+      try visitor.visitSingularStringField(value: self.paneID, fieldNumber: 1)
+    }
+    if self.mode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.mode, fieldNumber: 2)
+    }
+    if self.columns != 0 {
+      try visitor.visitSingularUInt32Field(value: self.columns, fieldNumber: 3)
+    }
+    if self.rows != 0 {
+      try visitor.visitSingularUInt32Field(value: self.rows, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_TerminalOpen, rhs: Northpane_Runtime_V1_TerminalOpen) -> Bool {
+    if lhs.paneID != rhs.paneID {return false}
+    if lhs.mode != rhs.mode {return false}
+    if lhs.columns != rhs.columns {return false}
+    if lhs.rows != rhs.rows {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_TerminalPoll: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".TerminalPoll"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}after_revision\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt64Field(value: &self.afterRevision) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.afterRevision != 0 {
+      try visitor.visitSingularInt64Field(value: self.afterRevision, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_TerminalPoll, rhs: Northpane_Runtime_V1_TerminalPoll) -> Bool {
+    if lhs.afterRevision != rhs.afterRevision {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_TerminalInput: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".TerminalInput"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}data\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.data) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.data.isEmpty {
+      try visitor.visitSingularBytesField(value: self.data, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_TerminalInput, rhs: Northpane_Runtime_V1_TerminalInput) -> Bool {
+    if lhs.data != rhs.data {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_TerminalResize: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".TerminalResize"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}columns\0\u{1}rows\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.columns) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.rows) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.columns != 0 {
+      try visitor.visitSingularUInt32Field(value: self.columns, fieldNumber: 1)
+    }
+    if self.rows != 0 {
+      try visitor.visitSingularUInt32Field(value: self.rows, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_TerminalResize, rhs: Northpane_Runtime_V1_TerminalResize) -> Bool {
+    if lhs.columns != rhs.columns {return false}
+    if lhs.rows != rhs.rows {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_TerminalScroll: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".TerminalScroll"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}direction\0\u{1}lines\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.direction) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.lines) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.direction != .scrollUnspecified {
+      try visitor.visitSingularEnumField(value: self.direction, fieldNumber: 1)
+    }
+    if self.lines != 0 {
+      try visitor.visitSingularUInt32Field(value: self.lines, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_TerminalScroll, rhs: Northpane_Runtime_V1_TerminalScroll) -> Bool {
+    if lhs.direction != rhs.direction {return false}
+    if lhs.lines != rhs.lines {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_TerminalRelease: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".TerminalRelease"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_TerminalRelease, rhs: Northpane_Runtime_V1_TerminalRelease) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_TerminalResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".TerminalResult"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}attachment_id\0\u{3}process_proof\0\u{1}revision\0\u{1}frame\0\u{1}controlling\0\u{1}ended\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.attachmentID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.processProof) }()
+      case 3: try { try decoder.decodeSingularInt64Field(value: &self.revision) }()
+      case 4: try { try decoder.decodeSingularBytesField(value: &self.frame) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.controlling) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.ended) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.attachmentID.isEmpty {
+      try visitor.visitSingularStringField(value: self.attachmentID, fieldNumber: 1)
+    }
+    if !self.processProof.isEmpty {
+      try visitor.visitSingularStringField(value: self.processProof, fieldNumber: 2)
+    }
+    if self.revision != 0 {
+      try visitor.visitSingularInt64Field(value: self.revision, fieldNumber: 3)
+    }
+    if !self.frame.isEmpty {
+      try visitor.visitSingularBytesField(value: self.frame, fieldNumber: 4)
+    }
+    if self.controlling != false {
+      try visitor.visitSingularBoolField(value: self.controlling, fieldNumber: 5)
+    }
+    if self.ended != false {
+      try visitor.visitSingularBoolField(value: self.ended, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_TerminalResult, rhs: Northpane_Runtime_V1_TerminalResult) -> Bool {
+    if lhs.attachmentID != rhs.attachmentID {return false}
+    if lhs.processProof != rhs.processProof {return false}
+    if lhs.revision != rhs.revision {return false}
+    if lhs.frame != rhs.frame {return false}
+    if lhs.controlling != rhs.controlling {return false}
+    if lhs.ended != rhs.ended {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_StartAgent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".StartAgent"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}pane_id\0\u{1}kind\0\u{1}executable\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.paneID) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.kind) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.executable) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.paneID.isEmpty {
+      try visitor.visitSingularStringField(value: self.paneID, fieldNumber: 1)
+    }
+    if self.kind != .agentUnspecified {
+      try visitor.visitSingularEnumField(value: self.kind, fieldNumber: 2)
+    }
+    if !self.executable.isEmpty {
+      try visitor.visitSingularStringField(value: self.executable, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_StartAgent, rhs: Northpane_Runtime_V1_StartAgent) -> Bool {
+    if lhs.paneID != rhs.paneID {return false}
+    if lhs.kind != rhs.kind {return false}
+    if lhs.executable != rhs.executable {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_Observe: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".Observe"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_Observe, rhs: Northpane_Runtime_V1_Observe) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_Changes: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".Changes"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}revision\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt64Field(value: &self.revision) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.revision != 0 {
+      try visitor.visitSingularInt64Field(value: self.revision, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_Changes, rhs: Northpane_Runtime_V1_Changes) -> Bool {
+    if lhs.revision != rhs.revision {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_Acknowledged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".Acknowledged"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_Acknowledged, rhs: Northpane_Runtime_V1_Acknowledged) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_PaneQuery: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".PaneQuery"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}pane_id\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.paneID) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.paneID.isEmpty {
+      try visitor.visitSingularStringField(value: self.paneID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_PaneQuery, rhs: Northpane_Runtime_V1_PaneQuery) -> Bool {
+    if lhs.paneID != rhs.paneID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_PaneInformation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".PaneInformation"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}scrollback_lines\0\u{1}agent\0\u{3}process_proof\0\u{3}last_activity_milliseconds\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt64Field(value: &self.scrollbackLines) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.agent) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.processProof) }()
+      case 4: try { try decoder.decodeSingularInt64Field(value: &self.lastActivityMilliseconds) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.scrollbackLines != 0 {
+      try visitor.visitSingularInt64Field(value: self.scrollbackLines, fieldNumber: 1)
+    }
+    if self.agent != .agentUnspecified {
+      try visitor.visitSingularEnumField(value: self.agent, fieldNumber: 2)
+    }
+    if !self.processProof.isEmpty {
+      try visitor.visitSingularStringField(value: self.processProof, fieldNumber: 3)
+    }
+    if self.lastActivityMilliseconds != 0 {
+      try visitor.visitSingularInt64Field(value: self.lastActivityMilliseconds, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_PaneInformation, rhs: Northpane_Runtime_V1_PaneInformation) -> Bool {
+    if lhs.scrollbackLines != rhs.scrollbackLines {return false}
+    if lhs.agent != rhs.agent {return false}
+    if lhs.processProof != rhs.processProof {return false}
+    if lhs.lastActivityMilliseconds != rhs.lastActivityMilliseconds {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

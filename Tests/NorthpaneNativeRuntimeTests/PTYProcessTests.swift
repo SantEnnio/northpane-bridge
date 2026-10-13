@@ -159,7 +159,7 @@ private func usage() -> (cpuSeconds: Double, peakRSSMiB: Double) {
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["NORTHPANE_TERMINAL_BENCHMARK"] == "1"))
     func fiftyMiBThroughTerminalEmulator() {
-        let screen = TerminalViewport(columns: 80, rows: 24, scrollback: 1000)
+        let screen = NativeTerminalEngine(columns: 80, rows: 24, scrollback: 1000)
         let pattern = Array("benchmark line 0123456789\r\n".utf8)
         let chunk = Data((0..<65536).map { pattern[$0 % pattern.count] })
         let before = usage()
@@ -171,8 +171,8 @@ private func usage() -> (cpuSeconds: Double, peakRSSMiB: Double) {
         let first = screen.terminal.buffer.totalLinesTrimmed
         #expect(screen.terminal.getScrollInvariantLine(row: first + 1024) == nil)
         #expect(screen.terminal.getScrollInvariantLine(row: first + 1023) != nil)
-        let replay = TerminalViewport(columns: 80, rows: 24, scrollback: 1000)
-        replay.feed(screen.replayViewport())
+        let replay = NativeTerminalEngine(columns: 80, rows: 24, scrollback: 1000)
+        replay.feed(screen.paintFrame())
         #expect(cells(screen.terminal) == cells(replay.terminal))
         print("Terminal: 50 MiB parsed, elapsed \(start.duration(to: .now)), CPU \(after.cpuSeconds - before.cpuSeconds)s, test-process peak RSS \(after.peakRSSMiB) MiB (before \(before.peakRSSMiB))")
     }
@@ -202,7 +202,7 @@ private func usage() -> (cpuSeconds: Double, peakRSSMiB: Double) {
                 environment: ["HOME": home.path, "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "TERM": "xterm-256color", "COLORTERM": "truecolor", "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8", "PS1": "probe$ "], columns: 80, rows: 24,
                 onOutput: capture.output, onExit: capture.ended)
             defer { process.terminate() }
-            let terminal = TerminalViewport(columns: 80, rows: 24)
+            let terminal = NativeTerminalEngine(columns: 80, rows: 24)
             var offset = 0
             let deadline = ContinuousClock.now.advanced(by: .seconds(4))
             while ContinuousClock.now < deadline && capture.snapshot().3 == nil {
@@ -216,9 +216,9 @@ private func usage() -> (cpuSeconds: Double, peakRSSMiB: Double) {
             }
             let initial = capture.snapshot().0
             try initial.write(to: root.appendingPathComponent("\(name).ansi"))
-            let replay = TerminalViewport(columns: 80, rows: 24)
+            let replay = NativeTerminalEngine(columns: 80, rows: 24)
             terminal.feed(initial.dropFirst(offset)); offset = initial.count
-            replay.feed(terminal.replayViewport())
+            replay.feed(terminal.paintFrame())
             var mismatches = 0
             for row in 0..<24 {
                 for col in 0..<80 {
@@ -239,7 +239,7 @@ private func usage() -> (cpuSeconds: Double, peakRSSMiB: Double) {
             }
             let full = capture.snapshot().0
             let tail = full.dropFirst(offset)
-            terminal.feed(tail); replay.feed(tail)
+            terminal.feed(tail); replay.feed(terminal.paintFrame())
             #expect(cells(terminal.terminal) == cells(replay.terminal))
             try Data(tail).write(to: root.appendingPathComponent("\(name)-exit.ansi"))
         }

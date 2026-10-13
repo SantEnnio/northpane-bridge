@@ -28,6 +28,16 @@ public final class PTYProcess: @unchecked Sendable {
     private let onOutput: @Sendable (Data) -> Void
     private let onExit: @Sendable (Int32, PTYError?) -> Void
 
+    public var processID: Int32 { child }
+
+    public func foregroundProcessID() -> Int32? {
+        lock.withLock {
+            guard master >= 0 else { return nil }
+            let pid = tcgetpgrp(master)
+            return pid > 0 ? pid : nil
+        }
+    }
+
     public static func launch(
         executable: String, arguments: [String] = [], directory: String,
         environment: [String: String] = ProcessInfo.processInfo.environment,
