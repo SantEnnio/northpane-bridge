@@ -68,13 +68,15 @@ jobs:
   macos:
     needs: version
     runs-on: macos-15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
-      - uses: compnerd/gha-setup-swift@397094e75494a93fa8d81db0268dbc8f5d6cf7c6 # v0.4.1
-        with:
-          swift-version: swift-6.3.2-release
-          swift-build: swift-6.3.2-RELEASE
+      - name: Selected Swift toolchain
+        run: swift --version
       - run: Scripts/package-macos.sh artifacts
+      - name: Complete resolved-package license texts
+        run: Scripts/package-notices.sh artifacts
       - name: The binary reports the tagged version
         run: gzip -dc artifacts/northpane-bridge-macos-universal.gz > "$RUNNER_TEMP/bridge" && chmod +x "$RUNNER_TEMP/bridge" && "$RUNNER_TEMP/bridge" --version | grep -F "northpane-bridge ${{ needs.version.outputs.version }} "
       - uses: actions/upload-artifact@v4

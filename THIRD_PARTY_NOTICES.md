@@ -36,3 +36,12 @@ these components next to the binaries.
 
 The complete upstream license texts from every resolved package must be
 included in the release notices.
+
+
+The native terminal engine uses [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm)
+at the exact revision in `Package.resolved`, distributed under the MIT License
+with upstream copyright attribution to Miguel de Icaza, the xterm.js authors,
+SourceLair and Christopher Jeffrey. Its portable graphics dependencies use
+[Swift PNG](https://github.com/tayloraswift/swift-png), including LZ77, and
+[H](https://github.com/rarestype/h), distributed under the Apache License 2.0.
+Their complete upstream license files are carried in the release license archive.

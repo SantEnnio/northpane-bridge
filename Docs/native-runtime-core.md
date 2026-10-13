@@ -66,7 +66,7 @@ Graphics and real agent-UI certification remain outside these textual fixtures.
 The pinned upstream source supports Musl directly. The static-build helper verifies
 the revision and rejects local changes; historical 1.15 patches are not applied.
 `SWIFTTERM_EXCLUDE_APPLE=1` excludes Apple sources when cross-compiling from macOS.
-The CI/release macOS jobs use Swift 6.3.2 explicitly. Windows dependency checkouts
+The CI/release macOS jobs select Xcode 26.3 explicitly. Windows dependency checkouts
 retain upstream LF resources: the terminfo build-info generator requires that form.
 Linux Crypto C++ objects link their runtime explicitly (GNU libstdc++ or static-SDK
 libc++), including when the dependency graph has build-tool executables.
