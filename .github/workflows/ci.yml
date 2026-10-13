@@ -16,6 +16,11 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
+      - uses: compnerd/gha-setup-swift@397094e75494a93fa8d81db0268dbc8f5d6cf7c6 # v0.4.1
+        with:
+          swift-version: swift-6.3.2-release
+          # macOS action adds the swift- prefix to the package filename itself.
+          swift-build: 6.3.2-RELEASE
       - name: Selected Swift toolchain
         run: swift --version
       - name: Install protoc
