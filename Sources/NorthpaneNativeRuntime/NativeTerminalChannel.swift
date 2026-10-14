@@ -39,7 +39,7 @@ final class NativeTerminalChannel: TerminalChannel, @unchecked Sendable {
                     guard next.processProof == previous.processProof else { throw NativeRuntimeProcessError.invalidFrame }
                     guard self.lock.withLock({ !self.stopped }) else { return }
                     if !next.bytes.isEmpty { onOutput(next.bytes) }
-                    self.lock.withLock { self.attachment = next }
+                    self.lock.withLock { if !self.stopped { self.attachment = next } }
                     if next.ended { self.stop(); onClose(nil) }
                     else if self.mode != .observe && !next.controlling {
                         self.stop(); onClose(NativeRuntimeProcessError.rejected("control_required"))
@@ -55,9 +55,13 @@ final class NativeTerminalChannel: TerminalChannel, @unchecked Sendable {
                 self.connection = connection; attachment = view; self.timer = timer; return true
             }
             guard accepted else { timer.resume(); timer.cancel(); throw NativeRuntimeProcessError.invalidConfiguration }
-            // The timer starts only after the full first frame was delivered.
-            onOutput(view.bytes)
-            timer.resume()
+            // All callbacks use this reader queue, including the first frame.
+            // Bounded output delivery may block here without blocking an actor.
+            queue.async { [weak self] in
+                if self?.lock.withLock({ self?.stopped == false }) == true { onOutput(view.bytes) }
+                // A cancelled source must still be resumed before release.
+                timer.resume()
+            }
         } catch { connection.close(); throw error }
     }
 

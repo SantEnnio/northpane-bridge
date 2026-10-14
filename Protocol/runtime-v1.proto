@@ -13,6 +13,7 @@ message Request {
     StartAgent start_agent = 6;
     Observe observe = 7;
     PaneQuery pane_query = 8;
+    AgentHook agent_hook = 9;
   }
 }
 message Hello { uint32 revision = 1; }
@@ -36,6 +37,7 @@ message Ready {
   int64 process_id = 4;
   bool workspace_model = 5;
   bool terminal_frames = 6;
+  bool agent_hooks = 7;
 }
 message Failure { string code = 1; }
 
@@ -108,4 +110,16 @@ message PaneInformation {
   AgentKind agent = 2;
   string process_proof = 3;
   int64 last_activity_milliseconds = 4;
+  string session_id = 5;
+}
+
+
+// Status comes from a process-scoped lifecycle hook, never screen heuristics.
+message AgentHook {
+  string pane_id = 1;
+  string process_proof = 2;
+  string event = 3;
+  string session_id = 4;
+  string working_directory = 5;
+  string request_proof = 6;
 }

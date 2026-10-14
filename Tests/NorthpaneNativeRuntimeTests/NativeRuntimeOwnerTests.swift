@@ -2,6 +2,14 @@
 import Foundation
 import Testing
 import NorthpaneHostRuntime
+import NorthpaneBridgeCore
+#if os(macOS)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
 import NorthpaneProtocol
 @testable import NorthpaneNativeRuntime
 
@@ -129,5 +137,90 @@ import NorthpaneProtocol
             try owner.closeWorkspace(workspaceID: pane.workspaceID)
         }
     }
+
+    @Test func lifecycleEvidenceIsBoundToTheProcessAndRootSessionAndDeduplicatesAttention() async throws {
+        try await withOwner { directory, owner in
+            let host = HostID()
+            let created = try owner.createWorkspace(label: "Project", workingDirectory: directory.path)
+            try owner.startAgent(paneID: created.paneID, kind: .codex, executable: "/bin/cat")
+            let identity = try #require(owner.conversationIdentity(paneID: created.paneID))
+            let proof = try #require(identity.processProof)
+            #expect(owner.snapshot(hostID: host).panes.first?.agentStatus == "unknown")
+            // Hooks may be trusted after SessionStart has already been skipped.
+            try owner.agentHook(paneID: created.paneID, proof: proof, event: "working", sessionID: "root", directory: "")
+            #expect(owner.snapshot(hostID: host).panes.first?.agentStatus == "working")
+            try owner.agentHook(paneID: created.paneID, proof: proof, event: "start", sessionID: "root", directory: directory.path)
+            var attention = AttentionTransitionTracker(grace: 0)
+            #expect(attention.observe(owner.snapshot(hostID: host).panes).isEmpty)
+            try owner.agentHook(paneID: created.paneID, proof: proof, event: "working", sessionID: "root", directory: "")
+            #expect(attention.observe(owner.snapshot(hostID: host).panes).isEmpty)
+            try owner.agentHook(paneID: created.paneID, proof: proof, event: "blocked", sessionID: "root", directory: "")
+            #expect(attention.observe(owner.snapshot(hostID: host).panes).map(\.id) == [created.paneID])
+            let revision = owner.revision
+            try owner.agentHook(paneID: created.paneID, proof: proof, event: "blocked", sessionID: "root", directory: "")
+            #expect(owner.revision == revision)
+            #expect(attention.observe(owner.snapshot(hostID: host).panes).isEmpty)
+            #expect(throws: NativeRuntimeOwnerError.processExited) {
+                try owner.agentHook(paneID: created.paneID, proof: UUID().uuidString, event: "idle", sessionID: "root", directory: "")
+            }
+            #expect(throws: NativeRuntimeProcessError.rejected("hook_session_mismatch")) {
+                try owner.agentHook(paneID: created.paneID, proof: proof, event: "idle", sessionID: "subagent", directory: "")
+            }
+            try owner.agentHook(paneID: created.paneID, proof: proof, event: "working", sessionID: "root", directory: "")
+            #expect(attention.observe(owner.snapshot(hostID: host).panes).isEmpty)
+            try owner.agentHook(paneID: created.paneID, proof: proof, event: "blocked", sessionID: "root", directory: "")
+            #expect(attention.observe(owner.snapshot(hostID: host).panes).count == 1)
+            try owner.agentHook(paneID: created.paneID, proof: proof, event: "idle", sessionID: "root", directory: "")
+            try owner.agentHook(paneID: created.paneID, proof: proof, event: "blocked", sessionID: "root", directory: "", requestProof: "one")
+            try owner.agentHook(paneID: created.paneID, proof: proof, event: "blocked", sessionID: "root", directory: "", requestProof: "two")
+            try owner.agentHook(paneID: created.paneID, proof: proof, event: "working", sessionID: "root", directory: "", requestProof: "one")
+            #expect(owner.snapshot(hostID: host).panes.first?.agentStatus == "blocked")
+            try owner.agentHook(paneID: created.paneID, proof: proof, event: "working", sessionID: "root", directory: "", requestProof: "two")
+            #expect(owner.snapshot(hostID: host).panes.first?.agentStatus == "working")
+            #expect(owner.conversationIdentity(paneID: created.paneID)?.sessionID == "root")
+            try owner.agentHook(paneID: created.paneID, proof: proof, event: "start", sessionID: "new-root", directory: "")
+            #expect(owner.conversationIdentity(paneID: created.paneID)?.sessionID == "new-root")
+            let layout = try String(contentsOf: directory.appending(path: "runtime/layout-v1.json"), encoding: .utf8)
+            #expect(!layout.contains("sessionID") && !layout.contains(proof))
+            try owner.closeWorkspace(workspaceID: created.workspaceID)
+        }
+    }
+
+    @Test func manualAgentsHaveBirthProofsButNoInventedStatusAndCwdFollowsTheProcess() async throws {
+        try await withOwner { directory, owner in
+            let home = directory.appending(path: "next")
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            let executable = home.appending(path: "codex")
+            // A harmless local cat copy exercises kernel process identity.
+            try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/cat"), to: executable)
+            let created = try owner.createWorkspace(label: "Project", workingDirectory: directory.path)
+            let connection = UUID()
+            let attached = try owner.open(connectionID: connection, paneID: created.paneID, mode: .control, columns: 80, rows: 24)
+            try owner.input(connectionID: connection, attachmentID: attached.attachmentID,
+                bytes: Data(("cd " + NativeAgentLaunch.shellQuote(home.path) + "; printf '\\143\\167\\144\\055\\162\\145\\141\\144\\171\\012'\r").utf8))
+            _ = try await waitFor("cwd-ready", owner: owner, connection: connection, attachment: attached.attachmentID)
+            let canonical = try #require(realpath(home.path, nil))
+            defer { free(canonical) }
+            #expect(owner.snapshot(hostID: HostID()).panes.first?.cwd == String(cString: canonical))
+            try owner.input(connectionID: connection, attachmentID: attached.attachmentID,
+                bytes: Data((NativeAgentLaunch.shellQuote(executable.path) + "\r").utf8))
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while owner.conversationIdentity(paneID: created.paneID) == nil && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            let identity = try #require(owner.conversationIdentity(paneID: created.paneID))
+            #expect(identity.agent == "codex" && identity.sessionID == nil && identity.processProof != nil)
+            #expect(owner.conversationIdentity(paneID: created.paneID) == identity)
+            #expect(owner.snapshot(hostID: HostID()).panes.first?.agentStatus == "unknown")
+            try owner.input(connectionID: connection, attachmentID: attached.attachmentID, bytes: Data([3]))
+            let exited = ContinuousClock.now.advanced(by: .seconds(3))
+            while owner.conversationIdentity(paneID: created.paneID) != nil && ContinuousClock.now < exited {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(owner.conversationIdentity(paneID: created.paneID) == nil)
+            try owner.closeWorkspace(workspaceID: created.workspaceID)
+        }
+    }
+
 }
 #endif

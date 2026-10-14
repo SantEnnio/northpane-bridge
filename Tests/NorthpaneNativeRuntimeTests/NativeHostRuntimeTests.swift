@@ -56,7 +56,7 @@ import NorthpaneProtocol
             let reopened = NativeCallbackCapture()
             try second.start(columns: 80, rows: 24, onOutput: { reopened.frame($0) }, onClose: { reopened.close($0) })
             defer { second.stop() }
-            #expect(reopened.text.contains("adapter-result"))
+            try await wait { reopened.text.contains("adapter-result") }
             try second.resize(columns: 50, rows: 10)
             try second.scroll(direction: .up, lines: 2)
             try second.release()

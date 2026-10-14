@@ -1,7 +1,9 @@
 # Native process foundation
 
-The native runtime is still experimental. Herdr remains the default and the
-Bridge has no production native Workspace or terminal adapter yet.
+The native owner serves the Workspace graph, PTYs, terminal views and process-scoped
+agent status on macOS and Linux. An installed Herdr remains the default; otherwise
+the Bridge selects the native adapter. Runtime selection and the schema 25
+handshake are described in [the core guide](native-runtime-core.md).
 
 On macOS and Linux the explicit commands are:
 
@@ -12,7 +14,7 @@ NORTHPANE_STATE_DIRECTORY=/tmp/northpane-cert northpane-bridge runtime --status
 
 `runtime` runs the owner in the foreground. `--ensure` reuses a healthy owner
 or executes a detached owner and waits for its handshake; `--status` only
-connects. Both print revision, incarnation, version and process ID as JSON.
+connects. Both print revision, incarnation, version, process ID and feature readiness as JSON.
 They do not start shells/agents, select the native adapter or install a user
 service. Windows reports the command as unavailable until its own IPC and
 process lifecycle are implemented.
@@ -92,3 +94,9 @@ agents and mark process status unknown: this is shape storage, not evidence of
 a running shell. The file carries no environment, terminal bytes, input or
 agent credentials. The store must be owned under the daemon's process lock;
 RPC integration, live metadata and PTY ownership are still forthcoming.
+
+Terminal delivery uses one ordered writer per attachment, with at most 32 queued
+frames and 2 MiB of queued data plus one in-flight frame. A slow connection
+backpressures its dedicated channel reader; painted frames are never dropped.
+Releasing an attachment wakes a blocked reader, and genuine closure drains the
+final frame before notifying the Client.

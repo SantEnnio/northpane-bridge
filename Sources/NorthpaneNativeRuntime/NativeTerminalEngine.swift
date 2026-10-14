@@ -18,6 +18,11 @@ final class NativeTerminalEngine: TerminalDelegate {
     private var stringEscape = false
     private var utf8Remaining = 0
     var replies = Data()
+    var currentDirectory: String? {
+        guard let value = terminal.hostCurrentDirectory, let url = URL(string: value), url.isFileURL,
+              !url.path.isEmpty, !url.path.utf8.contains(0) else { return nil }
+        return url.path
+    }
 
     init(columns: Int, rows: Int, scrollback: Int = 1000) {
         terminal = Terminal(delegate: self, options: TerminalOptions(cols: columns, rows: rows, scrollback: scrollback, enableSixelReported: false, kittyImageCacheLimitBytes: 0))

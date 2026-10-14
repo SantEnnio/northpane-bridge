@@ -11,7 +11,7 @@ Herdr adapter. It is available on macOS and Linux. The Bridge's default selectio
 chooses an installed Herdr by default and otherwise the native owner. The
 revision 25 handshake reports that choice; native Hosts reject legacy Clients. Windows preserves Herdr support; native ConPTY is a separate milestone.
 
-The additive `workspace_model` and `terminal_frames` readiness flags distinguish
+The additive workspace_model, terminal_frames and agent_hooks readiness flags distinguish
 older healthy owners. A newer Bridge never restarts an older owner to acquire
 features. Unsupported operations fail before being sent. Private IPC revision
 remains 1; these additions do not change the Client/Bridge protocol. Rejected
@@ -34,9 +34,12 @@ in another Bridge process. Observers can page their own history view but cannot 
 input or resize the process. Counts, grid dimensions and RPC payloads are bounded.
 
 Only graph shape and launch directories are persisted. Environment values, terminal
-contents and credentials are not written to the layout file. Agent status remains
-`unknown` until a trusted status integration supplies evidence; terminal output is
-not evidence that an agent is blocked or waiting for input.
+contents and credentials are not written to the layout file. Agent status remains unknown until a trusted process-scoped hook supplies evidence;
+terminal output is not evidence that an agent is blocked or waiting for input.
+Manually launched agents are recognized through foreground process arguments and
+birth identity, with unknown status. Current directory comes from the foreground
+process, falling back to hook/OSC metadata and then the launch directory.
+See [native agent hooks](native-agent-hooks.md) for provider trust and verification.
 
 ## Authoritative painted frames
 

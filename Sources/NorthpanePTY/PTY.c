@@ -5,12 +5,15 @@
 #include <limits.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <util.h>
+#include <libproc.h>
 #include <sys/sysctl.h>
 #else
 #include <pty.h>
@@ -140,4 +143,26 @@ int np_pty_signal(int child, int signal_number) {
     // Killing the session leader closes its PTY and hangs up remaining jobs.
     return kill(child, signal_number) < 0 ? errno : 0;
 }
+int np_pty_cwd(int process, char *path, size_t capacity) {
+    if (process <= 0 || !path || capacity < 2) return EINVAL;
+#if defined(__APPLE__)
+    struct proc_vnodepathinfo info;
+    memset(&info, 0, sizeof(info));
+    if (proc_pidinfo(process, PROC_PIDVNODEPATHINFO, 0, &info, sizeof(info)) != sizeof(info)) return errno ? errno : ESRCH;
+    size_t count = strnlen(info.pvi_cdir.vip_path, sizeof(info.pvi_cdir.vip_path));
+    if (count >= capacity || count == sizeof(info.pvi_cdir.vip_path)) return ENAMETOOLONG;
+    memcpy(path, info.pvi_cdir.vip_path, count + 1);
+    return 0;
+#else
+    char link[64];
+    int length = snprintf(link, sizeof(link), "/proc/%d/cwd", process);
+    if (length <= 0 || (size_t)length >= sizeof(link)) return EINVAL;
+    ssize_t count = readlink(link, path, capacity - 1);
+    if (count < 0) return errno;
+    if ((size_t)count >= capacity - 1) return ENAMETOOLONG;
+    path[count] = 0;
+    return 0;
+#endif
+}
+
 #endif

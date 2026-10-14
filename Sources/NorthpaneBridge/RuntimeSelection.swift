@@ -24,7 +24,9 @@ struct RuntimeSelection: Equatable, Sendable {
         let path = HerdrProcessRunner.resolveExecutable(environment: environment,
             homeDirectory: homeDirectory, isExecutable: isExecutable)
         if let path { return .init(kind: .herdr, herdrExecutable: URL(fileURLWithPath: path)) }
-        if requested == "herdr" || !nativeSupported { throw HerdrRuntimeError.executableUnavailable }
+        // Keep discovery/pairing available for a missing Herdr on Windows or
+        // an explicit Herdr scope. Its adapter reports unavailable until installed.
+        if requested == "herdr" || !nativeSupported { return .init(kind: .herdr, herdrExecutable: nil) }
         return .init(kind: .native, herdrExecutable: nil)
     }
 

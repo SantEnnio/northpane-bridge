@@ -38,6 +38,13 @@ public final class PTYProcess: @unchecked Sendable {
         }
     }
 
+    func foregroundWorkingDirectory() -> String? {
+        guard let pid = foregroundProcessID() else { return nil }
+        var path = [CChar](repeating: 0, count: 4096)
+        guard np_pty_cwd(pid, &path, path.count) == 0 else { return nil }
+        return String(cString: path)
+    }
+
     public static func launch(
         executable: String, arguments: [String] = [], directory: String,
         environment: [String: String] = ProcessInfo.processInfo.environment,

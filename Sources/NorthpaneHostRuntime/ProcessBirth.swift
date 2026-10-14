@@ -3,8 +3,8 @@ import Foundation
 import Darwin
 #endif
 
-enum ProcessBirth {
-    static func proof(pid: Int32) -> String? {
+public enum ProcessBirth {
+    public static func proof(pid: Int32) -> String? {
         guard pid > 0 else { return nil }
         #if os(macOS)
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]

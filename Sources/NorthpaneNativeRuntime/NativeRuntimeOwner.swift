@@ -14,10 +14,11 @@ struct NativeProcessConfiguration: Sendable {
     let shell: String
     let arguments: [String]
     let environment: [String: String]
+    var hookExecutable: URL? = nil
 
     static func current(environment: [String: String] = ProcessInfo.processInfo.environment) -> Self {
         let fallback = getpwuid(geteuid()).flatMap { $0.pointee.pw_shell }.map { String(cString: $0) } ?? "/bin/sh"
-        return .init(shell: environment["SHELL"] ?? fallback, arguments: ["-l"], environment: environment)
+        return .init(shell: environment["SHELL"] ?? fallback, arguments: ["-l"], environment: environment, hookExecutable: Bundle.main.executableURL)
     }
 }
 
@@ -55,6 +56,7 @@ final class NativeRuntimeOwner: @unchecked Sendable {
     private var attachments: [UUID: Attachment] = [:]
     private var controllers: [String: UUID] = [:]
     private var retiring: [String: PTYProcess] = [:]
+    private var foregroundProofs: [String: (birth: String, proof: String)] = [:]
     private let maximumProcesses = 128
     private let maximumAttachments = 128
 
@@ -67,6 +69,10 @@ final class NativeRuntimeOwner: @unchecked Sendable {
         var process: PTYProcess?
         var lastActivity: Date?
         var acceptsAgentStart = true
+        var agentStatus = "unknown"
+        var pendingRequests: Set<String> = []
+        var sessionID: String?
+        var reportedDirectory: String?
         init(directory: String, environment: [String: String], agent: WorkspaceAgentKind, columns: Int, rows: Int) {
             engine = NativeTerminalEngine(columns: columns, rows: rows, scrollback: 1000)
             self.directory = directory; self.environment = environment; self.agent = agent
@@ -105,10 +111,12 @@ final class NativeRuntimeOwner: @unchecked Sendable {
             let shape = model.snapshot(hostID: hostID)
             let live = shape.panes.map { pane -> WirePane in
                 guard let process = panes[pane.id] else { return pane }
+                let identity = self.agentIdentity(paneID: pane.id, pane: process)
                 return WirePane(id: pane.id, title: process.engine.title.isEmpty ? pane.title : process.engine.title,
                     workspaceID: pane.workspaceID, tabID: pane.tabID, revision: pane.revision,
-                    agent: process.agent == .shell || process.process == nil ? nil : process.agent.rawValue,
-                    agentStatus: "unknown", focused: pane.focused, cwd: process.directory,
+                    agent: identity?.agent,
+                    agentStatus: process.agent == .shell || process.process == nil ? "unknown" : process.agentStatus, focused: pane.focused,
+                    cwd: process.process?.foregroundWorkingDirectory() ?? process.reportedDirectory ?? process.engine.currentDirectory ?? process.directory,
                     lastActivityAt: process.lastActivity)
             }
             return WireRuntimeSnapshot(hostID: shape.hostID, incarnationID: shape.incarnationID,
@@ -156,7 +164,7 @@ final class NativeRuntimeOwner: @unchecked Sendable {
                     retiring[pane.proof] = process; processes.append(process)
                 }
             }
-            for id in ids { controllers.removeValue(forKey: id) }
+            for id in ids { controllers.removeValue(forKey: id); foregroundProofs.removeValue(forKey: id) }
             for id in attachments.keys.filter({ attachments[$0]?.paneID.hasPrefix(workspaceID + ":") == true }) { attachments.removeValue(forKey: id) }
             return processes
         }
@@ -191,8 +199,11 @@ final class NativeRuntimeOwner: @unchecked Sendable {
         let arguments: [String]
         if let executable {
             guard executable.hasPrefix("/"), !executable.utf8.contains(0), FileManager.default.isExecutableFile(atPath: executable) else { throw PTYError.invalidConfiguration }
-            let quoted = "'" + executable.replacingOccurrences(of: "'", with: "'\\''") + "'"
-            arguments = configuration.arguments + ["-c", "exec " + quoted]
+            let options = try NativeAgentLaunch.options(kind: agent, bridgeExecutable: configuration.hookExecutable,
+                stateDirectory: stateDirectory, environment: variables)
+            variables.merge(options.environment) { _, supplied in supplied }
+            let command = ([executable] + options.arguments).map(NativeAgentLaunch.shellQuote).joined(separator: " ")
+            arguments = configuration.arguments + ["-c", "exec " + command]
         } else { arguments = configuration.arguments }
         let proof = pane.proof
         pane.process = try PTYProcess.launch(executable: configuration.shell, arguments: arguments,
@@ -353,8 +364,63 @@ final class NativeRuntimeOwner: @unchecked Sendable {
 
     func conversationIdentity(paneID: String) -> RuntimeConversationIdentity? {
         queue.sync {
-            guard let pane = panes[paneID], pane.process != nil, pane.agent != .shell else { return nil }
-            return RuntimeConversationIdentity(agent: pane.agent.rawValue, processProof: pane.proof)
+            guard let pane = panes[paneID] else { return nil }
+            return agentIdentity(paneID: paneID, pane: pane)
+        }
+    }
+
+    private func agentIdentity(paneID: String, pane: PaneProcess) -> RuntimeConversationIdentity? {
+        guard let process = pane.process else { foregroundProofs.removeValue(forKey: paneID); return nil }
+        if pane.agent != .shell {
+            return RuntimeConversationIdentity(agent: pane.agent.rawValue.lowercased(), sessionID: pane.sessionID, processProof: pane.proof)
+        }
+        guard let pid = process.foregroundProcessID(), let identity = NativeForegroundAgent.identify(pid: pid) else {
+            foregroundProofs.removeValue(forKey: paneID); return nil
+        }
+        let proof: String
+        if let cached = foregroundProofs[paneID], cached.birth == identity.birth { proof = cached.proof }
+        else {
+            proof = UUID().uuidString
+            foregroundProofs[paneID] = (identity.birth, proof)
+        }
+        // A manually launched process has no trusted lifecycle hook. Its status
+        // stays unknown, and its birth proof cannot associate another process.
+        return RuntimeConversationIdentity(agent: identity.kind.rawValue.lowercased(), processProof: proof)
+    }
+
+    func agentHook(paneID: String, proof: String, event: String, sessionID: String, directory: String, requestProof: String = "") throws {
+        try queue.sync {
+            guard let pane = panes[paneID], pane.proof == proof, pane.process != nil, pane.agent != .shell else {
+                throw NativeRuntimeOwnerError.processExited
+            }
+            guard !sessionID.isEmpty, sessionID.utf8.count <= 512,
+                  !sessionID.unicodeScalars.contains(where: { $0.value < 32 }),
+                  requestProof.utf8.count <= 128,
+                  ["start", "working", "blocked", "idle", "end"].contains(event) else {
+                throw NativeRuntimeProcessError.invalidConfiguration
+            }
+            // A subagent or a late callback cannot replace the root conversation.
+            guard pane.sessionID == nil || pane.sessionID == sessionID || event == "start" else {
+                throw NativeRuntimeProcessError.rejected("hook_session_mismatch")
+            }
+            var pending = event == "start" ? Set<String>() : pane.pendingRequests
+            switch event {
+            case "blocked":
+                guard pending.count < 64 || pending.contains(requestProof) else { throw NativeRuntimeOwnerError.limitExceeded }
+                pending.insert(requestProof)
+            case "working": pending.remove(requestProof)
+            case "idle", "end": pending.removeAll()
+            default: break
+            }
+            let status = pending.isEmpty
+                ? ["start": "idle", "working": "working", "blocked": "blocked", "idle": "idle", "end": "unknown"][event]!
+                : "blocked"
+            pane.pendingRequests = pending
+            let cwd = directory.hasPrefix("/") && directory.utf8.count <= 4096 && !directory.utf8.contains(0) ? directory : pane.reportedDirectory
+            if pane.sessionID != sessionID || pane.agentStatus != status || pane.reportedDirectory != cwd {
+                pane.sessionID = sessionID; pane.agentStatus = status; pane.reportedDirectory = cwd
+                model.markRuntimeChange()
+            }
         }
     }
 

@@ -1,5 +1,6 @@
 import Foundation
 import NorthpaneBridgeResources
+import NorthpaneHostRuntime
 
 /// Runs only after an Operator explicitly enables notifications for a paired device. The app
 /// itself does not need to stay open: launchd keeps one observation process alive for the Host.
@@ -7,15 +8,17 @@ enum NotificationWatcherInstallation {
     #if os(macOS)
     private static let label = "it.ambiens.northpane.notification-watcher"
 
-    static func install(stateDirectory: URL) throws {
+    static func install(stateDirectory: URL, runtimeKind: RuntimeKind? = nil) throws {
         let directory = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/LaunchAgents", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let plist = directory.appending(path: "\(label).plist")
         let executable = try executablePath()
+        var environment = ["NORTHPANE_STATE_DIRECTORY": stateDirectory.path]
+        if let runtimeKind { environment["NORTHPANE_RUNTIME"] = runtimeKind.rawValue }
         let data = try PropertyListSerialization.data(fromPropertyList: [
             "Label": label,
             "ProgramArguments": [executable, "watch"],
-            "EnvironmentVariables": ["NORTHPANE_STATE_DIRECTORY": stateDirectory.path],
+            "EnvironmentVariables": environment,
             "RunAtLoad": true,
             "KeepAlive": true,
         ] as [String: Any], format: .xml, options: 0)
@@ -43,7 +46,7 @@ enum NotificationWatcherInstallation {
     #elseif os(Linux)
     private static let unit = "northpane-notification-watcher.service"
 
-    static func install(stateDirectory: URL) throws {
+    static func install(stateDirectory: URL, runtimeKind: RuntimeKind? = nil) throws {
         let directory = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/systemd/user", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let service = directory.appending(path: unit)
@@ -58,6 +61,7 @@ enum NotificationWatcherInstallation {
         Type=simple
         ExecStart=\(executable.replacingOccurrences(of: " ", with: "\\x20")) watch
         Environment="NORTHPANE_STATE_DIRECTORY=\(stateDirectory.path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))"
+        \(runtimeKind.map { "Environment=\"NORTHPANE_RUNTIME=\($0.rawValue)\"" } ?? "")
         Restart=always
         RestartSec=5
 
@@ -82,7 +86,7 @@ enum NotificationWatcherInstallation {
         _ = try command("/usr/bin/systemctl", ["--user", "daemon-reload"])
     }
     #else
-    static func install(stateDirectory: URL) throws { throw NotificationError.routeUnavailable }
+    static func install(stateDirectory: URL, runtimeKind: RuntimeKind? = nil) throws { throw NotificationError.routeUnavailable }
     static func uninstallIfUnused(stateDirectory: URL, routesRemain: Bool) throws {}
     #endif
 

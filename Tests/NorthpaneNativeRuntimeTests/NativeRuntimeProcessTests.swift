@@ -364,5 +364,49 @@ import Musl
             #expect(try await managed.connection.ping() == server.status)
         }
     }
+
+    @Test func hookIpcCarriesOnlyProcessScopedStatusAndRootConversationIdentity() async throws {
+        try await withServer(liveProcesses: true) { directory, _ in
+            let connection = try await NativeRuntimeConnection.connect(stateDirectory: directory)
+            defer { connection.close() }
+            #expect(connection.status.agentHooks)
+            let host = HostID()
+            let created = try await connection.createWorkspace(hostID: host, label: "Project", workingDirectory: directory.path)
+            try await connection.startAgent(paneID: created.paneID, kind: .codex, executable: URL(fileURLWithPath: "/bin/cat"))
+            let identity = try #require(try await connection.paneInformation(paneID: created.paneID).conversation)
+            let proof = try #require(identity.processProof)
+            let environment = ["NORTHPANE_PANE_ID": created.paneID, "NORTHPANE_PROCESS_PROOF": proof,
+                "NORTHPANE_RUNTIME_SOCKET": directory.appending(path: "runtime/runtime.sock").path]
+            let body = Data(#"{"session_id":"root-session","cwd":"/tmp","agent_id":null,"tool_input":{"private":"not retained"},"transcript_path":"/never-read"}"#.utf8)
+            try NativeAgentHook.report(event: "start", input: body, environment: environment)
+            try NativeAgentHook.report(event: "blocked", input: body, environment: environment)
+            #expect(try await connection.currentSnapshot(hostID: host).panes.first?.agentStatus == "blocked")
+            #expect(try await connection.paneInformation(paneID: created.paneID).conversation?.sessionID == "root-session")
+            let child = Data(#"{"session_id":"root-session","agent_id":"child"}"#.utf8)
+            try NativeAgentHook.report(event: "idle", input: child, environment: environment)
+            #expect(try await connection.currentSnapshot(hostID: host).panes.first?.agentStatus == "blocked")
+            try NativeAgentHook.report(event: "working", input: body, environment: environment)
+            #expect(try await connection.currentSnapshot(hostID: host).panes.first?.agentStatus == "working")
+            let layout = try String(contentsOf: directory.appending(path: "runtime/layout-v1.json"), encoding: .utf8)
+            #expect(!layout.contains("root-session") && !layout.contains("not retained") && !layout.contains("never-read"))
+            try await connection.closeWorkspace(hostID: host, workspaceID: created.workspaceID)
+        }
+    }
+
+
+    @Test(arguments: [WorkspaceAgentKind.codex, .claude, .openCode])
+    func everyAgentKindRoundTripsThroughNativeIpc(kind: WorkspaceAgentKind) async throws {
+        try await withServer(liveProcesses: true) { directory, _ in
+            let connection = try await NativeRuntimeConnection.connect(stateDirectory: directory)
+            defer { connection.close() }
+            let host = HostID()
+            let created = try await connection.createWorkspace(hostID: host, label: "Project", workingDirectory: directory.path)
+            try await connection.startAgent(paneID: created.paneID, kind: kind, executable: URL(fileURLWithPath: "/bin/cat"))
+            #expect(try await connection.paneInformation(paneID: created.paneID).conversation?.agent == kind.rawValue.lowercased())
+            #expect(try await connection.currentSnapshot(hostID: host).panes.first?.agent == kind.rawValue.lowercased())
+            try await connection.closeWorkspace(hostID: host, workspaceID: created.workspaceID)
+        }
+    }
+
 }
 #endif

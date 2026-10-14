@@ -100,8 +100,8 @@ extension NativeRuntimeConnection {
             if info.agent == .agentUnspecified { identity = nil }
             else {
                 guard UUID(uuidString: info.processProof) != nil else { throw NativeRuntimeProcessError.invalidFrame }
-                identity = RuntimeConversationIdentity(agent: try NativeRuntimeServer.agentKind(info.agent).rawValue,
-                    processProof: info.processProof)
+                identity = RuntimeConversationIdentity(agent: try NativeRuntimeServer.agentKind(info.agent).rawValue.lowercased(),
+                    sessionID: info.sessionID.isEmpty ? nil : info.sessionID, processProof: info.processProof)
             }
             let date = info.lastActivityMilliseconds > 0 ? Date(timeIntervalSince1970: Double(info.lastActivityMilliseconds) / 1000) : nil
             return NativePaneInformation(scrollbackLines: lines, conversation: identity, lastActivity: date)

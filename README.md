@@ -1,8 +1,8 @@
 # Northpane Bridge
 
 The Bridge is the part of Northpane that runs on your own
-computer, the **Host**, next to [Herdr](https://herdr.dev). The Northpane apps for Mac, iPhone
-and iPad talk to it over SSH to show your Herdr workspaces, follow and control terminals, open
+computer, the **Host**. The Northpane apps for Mac, iPhone and iPad talk to it over SSH
+to show your workspaces, follow and control terminals, open
 previews and read the files an agent points at. The Bridge never runs as root and keeps
 everything it writes under your home directory.
 
@@ -46,9 +46,22 @@ reinstalling the Bridge therefore never changes which Host it is. (Until 1.0.3 a
 a Mac kept the key in the Keychain; a Bridge from 1.0.4 on still finds it there and copies it
 beside the state.)
 
-Herdr must be installed on the Host. The Bridge finds it in `~/.local/bin` (Herdr's
-installer), Homebrew, `/usr/local/bin`, `/usr/bin` or `PATH`, or wherever
-`NORTHPANE_HERDR_EXECUTABLE` points.
+On macOS and Linux, an installed [Herdr](https://herdr.dev) remains the default runtime.
+Without Herdr, the Bridge uses its native user-local owner for Workspaces, Panes and
+terminals. Windows continues to use Herdr. Discovery and pairing remain available when
+a required Herdr installation is missing.
+
+The Bridge finds Herdr in its installer directory, Homebrew, /usr/local/bin,
+/usr/bin, PATH, or NORTHPANE_HERDR_EXECUTABLE. NORTHPANE_RUNTIME=native or
+NORTHPANE_RUNTIME=herdr selects one explicitly. Transient Herdr errors never switch
+an existing scope to native.
+
+The [native runtime](Docs/native-runtime-core.md) owns PTYs independently of Bridge
+connections. It preserves live children and terminal history across disconnects.
+Its saved layout survives owner restart with a new incarnation; restarting does not
+resurrect agents. The public handshake reports runtime kind/version in schema 25.
+Agent status comes from [process-scoped hooks](Docs/native-agent-hooks.md), without
+changing global provider configuration or bypassing provider trust and permissions.
 
 ## Agent plan usage
 

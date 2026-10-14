@@ -7,26 +7,26 @@ import NorthpaneProtocol
 
 @Suite struct RuntimeSelectionTests {
     @Test func installedHerdrRemainsTheDefaultAndErrorsCannotTriggerSelectionAgain() throws {
-        let selected = try RuntimeSelection.resolve(environment: ["PATH": "/tools"], homeDirectory: "/home/operator",
-            nativeSupported: true, isExecutable: { $0 == "/tools/herdr" })
+        let directory = HerdrProcessRunner.isWindows ? #"C:\tools"# : "/tools"
+        let executable = HerdrProcessRunner.isWindows ? #"C:\tools\herdr.exe"# : "/tools/herdr"
+        let selected = try RuntimeSelection.resolve(environment: ["PATH": directory], homeDirectory: "/home/operator",
+            nativeSupported: true, isExecutable: { $0 == executable })
         #expect(selected.kind == .herdr)
-        #expect(selected.herdrExecutable?.path == "/tools/herdr")
+        #expect(selected.herdrExecutable == URL(fileURLWithPath: executable))
     }
     @Test func aMissingHerdrSelectsNativeOnlyOnSupportedHosts() throws {
         #expect(try RuntimeSelection.resolve(environment: [:], homeDirectory: "/home/operator", nativeSupported: true,
             isExecutable: { _ in false }).kind == .native)
-        #expect(throws: HerdrRuntimeError.executableUnavailable) {
-            try RuntimeSelection.resolve(environment: [:], homeDirectory: "/home/operator", nativeSupported: false,
-                isExecutable: { _ in false })
-        }
+        let unavailable = try RuntimeSelection.resolve(environment: [:], homeDirectory: "/home/operator", nativeSupported: false,
+            isExecutable: { _ in false })
+        #expect(unavailable.kind == .herdr && unavailable.herdrExecutable == nil)
     }
     @Test func explicitChoicesAreHonoredAndInvalidValuesFail() throws {
         #expect(try RuntimeSelection.resolve(environment: ["NORTHPANE_RUNTIME": "native"], homeDirectory: "/home/operator",
             nativeSupported: true, isExecutable: { _ in true }).kind == .native)
-        #expect(throws: HerdrRuntimeError.executableUnavailable) {
-            try RuntimeSelection.resolve(environment: ["NORTHPANE_RUNTIME": "herdr"], homeDirectory: "/home/operator",
-                nativeSupported: true, isExecutable: { _ in false })
-        }
+        let unavailable = try RuntimeSelection.resolve(environment: ["NORTHPANE_RUNTIME": "herdr"], homeDirectory: "/home/operator",
+            nativeSupported: true, isExecutable: { _ in false })
+        #expect(unavailable.kind == .herdr && unavailable.herdrExecutable == nil)
         #expect(throws: NativeSelectionError.invalidOverride) {
             try RuntimeSelection.resolve(environment: ["NORTHPANE_RUNTIME": "typo"], homeDirectory: "/home/operator")
         }

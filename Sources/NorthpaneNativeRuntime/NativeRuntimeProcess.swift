@@ -29,6 +29,7 @@ public struct NativeRuntimeStatus: Equatable, Codable, Sendable {
     public let processID: Int32
     public let workspaceModel: Bool
     public let terminalFrames: Bool
+    public let agentHooks: Bool
 }
 
 enum RuntimeIPC {
@@ -104,7 +105,7 @@ public final class NativeRuntimeConnection: @unchecked Sendable {
             throw NativeRuntimeProcessError.invalidFrame
         }
         return NativeRuntimeStatus(revision: ready.revision, incarnationID: ready.incarnation,
-            version: ready.version, processID: pid, workspaceModel: ready.workspaceModel, terminalFrames: ready.terminalFrames)
+            version: ready.version, processID: pid, workspaceModel: ready.workspaceModel, terminalFrames: ready.terminalFrames, agentHooks: ready.agentHooks)
     }
 
     public func currentSnapshot(hostID: HostID) async throws -> WireRuntimeSnapshot {
@@ -205,7 +206,7 @@ public final class NativeRuntimeServer: @unchecked Sendable {
         } catch { np_runtime_close(lock); throw error }
         lockDescriptor = lock
         status = NativeRuntimeStatus(revision: RuntimeIPC.revision, incarnationID: incarnation,
-            version: version, processID: getpid(), workspaceModel: workspaceModelEnabled, terminalFrames: workspaceModelEnabled && processConfiguration != nil)
+            version: version, processID: getpid(), workspaceModel: workspaceModelEnabled, terminalFrames: workspaceModelEnabled && processConfiguration != nil, agentHooks: workspaceModelEnabled && processConfiguration != nil)
     }
 
     deinit {
@@ -277,6 +278,14 @@ public final class NativeRuntimeServer: @unchecked Sendable {
                         response.acknowledged = .init()
                     } catch { response.failure.code = Self.failureCode(error) }
                     try socket.send(response); continue
+                case let .agentHook(command) where negotiated != nil:
+                    do {
+                        guard let owner else { throw NativeRuntimeOwnerError.unsupported }
+                        try owner.agentHook(paneID: command.paneID, proof: command.processProof,
+                            event: command.event, sessionID: command.sessionID, directory: command.workingDirectory, requestProof: command.requestProof)
+                        response.acknowledged = .init()
+                    } catch { response.failure.code = Self.failureCode(error) }
+                    try socket.send(response); continue
                 case .observe where negotiated != nil:
                     guard let owner else { response.failure.code = "workspace_model_unavailable"; try socket.send(response); continue }
                     response.changes.revision = Int64(owner.revision)
@@ -288,6 +297,7 @@ public final class NativeRuntimeServer: @unchecked Sendable {
                         if let identity = owner.conversationIdentity(paneID: command.paneID) {
                             response.pane.agent = Self.agentKind(identity.agent)
                             response.pane.processProof = identity.processProof ?? ""
+                            response.pane.sessionID = identity.sessionID ?? ""
                         }
                         if let date = owner.lastActivity(paneID: command.paneID) {
                             response.pane.lastActivityMilliseconds = Int64(date.timeIntervalSince1970 * 1000)
@@ -304,6 +314,7 @@ public final class NativeRuntimeServer: @unchecked Sendable {
                 response.ready.processID = Int64(status.processID)
                 response.ready.workspaceModel = status.workspaceModel
                 response.ready.terminalFrames = status.terminalFrames
+                response.ready.agentHooks = status.agentHooks
                 try socket.send(response)
             } catch { return }
         }
@@ -378,7 +389,7 @@ public final class NativeRuntimeServer: @unchecked Sendable {
     }
 
     static func agentKind(_ rawValue: String) -> Northpane_Runtime_V1_AgentKind {
-        switch rawValue { case "shell": return .shell; case "codex": return .codex; case "claude": return .claude; case "opencode": return .opencode; default: return .agentUnspecified }
+        switch rawValue.lowercased() { case "shell": return .shell; case "codex": return .codex; case "claude": return .claude; case "opencode": return .opencode; default: return .agentUnspecified }
     }
 
     private static func failureCode(_ error: any Error) -> String {

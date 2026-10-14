@@ -256,6 +256,14 @@ nonisolated struct Northpane_Runtime_V1_Request: Sendable {
     set {operation = .paneQuery(newValue)}
   }
 
+  var agentHook: Northpane_Runtime_V1_AgentHook {
+    get {
+      if case .agentHook(let v)? = operation {return v}
+      return Northpane_Runtime_V1_AgentHook()
+    }
+    set {operation = .agentHook(newValue)}
+  }
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   nonisolated enum OneOf_Operation: Equatable, Sendable {
@@ -266,6 +274,7 @@ nonisolated struct Northpane_Runtime_V1_Request: Sendable {
     case startAgent(Northpane_Runtime_V1_StartAgent)
     case observe(Northpane_Runtime_V1_Observe)
     case paneQuery(Northpane_Runtime_V1_PaneQuery)
+    case agentHook(Northpane_Runtime_V1_AgentHook)
 
   }
 
@@ -391,6 +400,8 @@ nonisolated struct Northpane_Runtime_V1_Ready: Sendable {
   var workspaceModel: Bool = false
 
   var terminalFrames: Bool = false
+
+  var agentHooks: Bool = false
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -846,6 +857,31 @@ nonisolated struct Northpane_Runtime_V1_PaneInformation: Sendable {
 
   var lastActivityMilliseconds: Int64 = 0
 
+  var sessionID: String = String()
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+/// Status comes from a process-scoped lifecycle hook, never screen heuristics.
+nonisolated struct Northpane_Runtime_V1_AgentHook: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var paneID: String = String()
+
+  var processProof: String = String()
+
+  var event: String = String()
+
+  var sessionID: String = String()
+
+  var workingDirectory: String = String()
+
+  var requestProof: String = String()
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   init() {}
@@ -873,7 +909,7 @@ nonisolated extension Northpane_Runtime_V1_AgentKind: SwiftProtobuf._ProtoNamePr
 
 nonisolated extension Northpane_Runtime_V1_Request: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".Request"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}hello\0\u{1}ping\0\u{1}workspace\0\u{1}terminal\0\u{3}start_agent\0\u{1}observe\0\u{3}pane_query\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}hello\0\u{1}ping\0\u{1}workspace\0\u{1}terminal\0\u{3}start_agent\0\u{1}observe\0\u{3}pane_query\0\u{3}agent_hook\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -973,6 +1009,19 @@ nonisolated extension Northpane_Runtime_V1_Request: SwiftProtobuf.Message, Swift
           self.operation = .paneQuery(v)
         }
       }()
+      case 9: try {
+        var v: Northpane_Runtime_V1_AgentHook?
+        var hadOneofValue = false
+        if let current = self.operation {
+          hadOneofValue = true
+          if case .agentHook(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.operation = .agentHook(v)
+        }
+      }()
       default: break
       }
     }
@@ -1014,6 +1063,10 @@ nonisolated extension Northpane_Runtime_V1_Request: SwiftProtobuf.Message, Swift
     case .paneQuery?: try {
       guard case .paneQuery(let v)? = self.operation else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+    }()
+    case .agentHook?: try {
+      guard case .agentHook(let v)? = self.operation else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
     }()
     case nil: break
     }
@@ -1236,7 +1289,7 @@ nonisolated extension Northpane_Runtime_V1_Response: SwiftProtobuf.Message, Swif
 
 nonisolated extension Northpane_Runtime_V1_Ready: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".Ready"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}revision\0\u{1}incarnation\0\u{1}version\0\u{3}process_id\0\u{3}workspace_model\0\u{3}terminal_frames\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}revision\0\u{1}incarnation\0\u{1}version\0\u{3}process_id\0\u{3}workspace_model\0\u{3}terminal_frames\0\u{3}agent_hooks\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1250,6 +1303,7 @@ nonisolated extension Northpane_Runtime_V1_Ready: SwiftProtobuf.Message, SwiftPr
       case 4: try { try decoder.decodeSingularInt64Field(value: &self.processID) }()
       case 5: try { try decoder.decodeSingularBoolField(value: &self.workspaceModel) }()
       case 6: try { try decoder.decodeSingularBoolField(value: &self.terminalFrames) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.agentHooks) }()
       default: break
       }
     }
@@ -1274,6 +1328,9 @@ nonisolated extension Northpane_Runtime_V1_Ready: SwiftProtobuf.Message, SwiftPr
     if self.terminalFrames != false {
       try visitor.visitSingularBoolField(value: self.terminalFrames, fieldNumber: 6)
     }
+    if self.agentHooks != false {
+      try visitor.visitSingularBoolField(value: self.agentHooks, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1284,6 +1341,7 @@ nonisolated extension Northpane_Runtime_V1_Ready: SwiftProtobuf.Message, SwiftPr
     if lhs.processID != rhs.processID {return false}
     if lhs.workspaceModel != rhs.workspaceModel {return false}
     if lhs.terminalFrames != rhs.terminalFrames {return false}
+    if lhs.agentHooks != rhs.agentHooks {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2262,7 +2320,7 @@ nonisolated extension Northpane_Runtime_V1_PaneQuery: SwiftProtobuf.Message, Swi
 
 nonisolated extension Northpane_Runtime_V1_PaneInformation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".PaneInformation"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}scrollback_lines\0\u{1}agent\0\u{3}process_proof\0\u{3}last_activity_milliseconds\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}scrollback_lines\0\u{1}agent\0\u{3}process_proof\0\u{3}last_activity_milliseconds\0\u{3}session_id\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2274,6 +2332,7 @@ nonisolated extension Northpane_Runtime_V1_PaneInformation: SwiftProtobuf.Messag
       case 2: try { try decoder.decodeSingularEnumField(value: &self.agent) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.processProof) }()
       case 4: try { try decoder.decodeSingularInt64Field(value: &self.lastActivityMilliseconds) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
       default: break
       }
     }
@@ -2292,6 +2351,9 @@ nonisolated extension Northpane_Runtime_V1_PaneInformation: SwiftProtobuf.Messag
     if self.lastActivityMilliseconds != 0 {
       try visitor.visitSingularInt64Field(value: self.lastActivityMilliseconds, fieldNumber: 4)
     }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2300,6 +2362,62 @@ nonisolated extension Northpane_Runtime_V1_PaneInformation: SwiftProtobuf.Messag
     if lhs.agent != rhs.agent {return false}
     if lhs.processProof != rhs.processProof {return false}
     if lhs.lastActivityMilliseconds != rhs.lastActivityMilliseconds {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Runtime_V1_AgentHook: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".AgentHook"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}pane_id\0\u{3}process_proof\0\u{1}event\0\u{3}session_id\0\u{3}working_directory\0\u{3}request_proof\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.paneID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.processProof) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.event) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.workingDirectory) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.requestProof) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.paneID.isEmpty {
+      try visitor.visitSingularStringField(value: self.paneID, fieldNumber: 1)
+    }
+    if !self.processProof.isEmpty {
+      try visitor.visitSingularStringField(value: self.processProof, fieldNumber: 2)
+    }
+    if !self.event.isEmpty {
+      try visitor.visitSingularStringField(value: self.event, fieldNumber: 3)
+    }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 4)
+    }
+    if !self.workingDirectory.isEmpty {
+      try visitor.visitSingularStringField(value: self.workingDirectory, fieldNumber: 5)
+    }
+    if !self.requestProof.isEmpty {
+      try visitor.visitSingularStringField(value: self.requestProof, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Runtime_V1_AgentHook, rhs: Northpane_Runtime_V1_AgentHook) -> Bool {
+    if lhs.paneID != rhs.paneID {return false}
+    if lhs.processProof != rhs.processProof {return false}
+    if lhs.event != rhs.event {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.workingDirectory != rhs.workingDirectory {return false}
+    if lhs.requestProof != rhs.requestProof {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

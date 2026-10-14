@@ -107,6 +107,19 @@ struct NorthpaneBridge {
                 FileHandle.standardError.write(Data(startupFailure(error).utf8))
                 Foundation.exit(1)
             }
+        case let hookArguments where hookArguments.count == 2 && hookArguments[0] == "hook":
+            let event = hookArguments[1]
+            #if os(macOS) || os(Linux)
+            // Advisory only: no stdout decisions, no failure that could stop an
+            // agent tool or change its approval policy. Read a bounded payload.
+            var input = Data()
+            while input.count < 65_537,
+                  let chunk = try? FileHandle.standardInput.read(upToCount: min(4096, 65_537 - input.count)), !chunk.isEmpty {
+                input.append(chunk)
+            }
+            try? NativeAgentHook.report(event: event, input: input)
+            #endif
+            return
         case ["runtime", "--status"], ["runtime", "--ensure"]:
             #if os(macOS) || os(Linux)
             do {
@@ -208,7 +221,8 @@ struct NorthpaneBridge {
                 subscription = changes
                 try await changes.start(onEvent: { continuation.yield(true) }, onClose: { _ in continuation.yield(false); continuation.finish() })
                 let first = try await context.currentSnapshot(sessionName: sessionName)
-                var tracker = AttentionTransitionTracker()
+                let runtimeKind = await context.detectedRuntimeDescriptor().kind
+                var tracker = AttentionTransitionTracker(grace: runtimeKind == .native ? 0 : 2)
                 _ = tracker.observe(first.panes)
                 var pending: [String: WirePane] = [:]
                 await changes.updatePaneIDs(first.panes.map(\.id))
@@ -513,7 +527,19 @@ struct NorthpaneBridge {
                     responsePayload = .problem(Problem(code: runtimePrefix + "_unavailable", locus: runtimeLocus, retry: .afterUserAction, recoveryAction: nativeRuntime ? "startRuntimeOrRetry" : "installOrStartHerdr", phase: .discovery))
                     break
                 }
-                await terminalRegistry.add(session, mode: attach.mode, id: attachmentID, paneID: attach.paneID,
+                let output = TerminalOutputDelivery(deliver: { bytes in
+                    guard let sequence = await terminalRegistry.nextOutputSequence(for: attachmentID) else { return }
+                    let frame = TerminalOutputFrame(attachmentID: attachmentID, sequence: sequence, bytes: bytes)
+                    try await transport.send(Envelope(connectionID: request.connectionID, channelID: request.channelID, payload: .terminalOutput(frame)))
+                }, onFailure: {
+                    Task {
+                        guard let removed = await terminalRegistry.remove(attachmentID) else { return }
+                        try? removed.release(); removed.stop()
+                        let problem = Problem(code: "terminal_stream_failed", locus: runtimeLocus, retry: .afterRefresh, recoveryAction: "reattachReadOnly", phase: .terminal)
+                        try? await transport.send(Envelope(connectionID: request.connectionID, channelID: request.channelID, payload: .problem(problem)))
+                    }
+                })
+                await terminalRegistry.add(session, output: output, mode: attach.mode, id: attachmentID, paneID: attach.paneID,
                                            columns: attach.columns, rows: attach.rows)
                 if attach.mode == .takeover {
                     await audit(category: "takeover", reference: "pane", outcome: "applied", reason: "current-observation")
@@ -521,13 +547,9 @@ struct NorthpaneBridge {
                     try await transport.send(Envelope(protocolMajor: request.protocolMajor, schemaRevision: request.schemaRevision, connectionID: request.connectionID, channelID: request.channelID, messageID: request.messageID, payload: .terminalAttached(TerminalAttached(attachmentID: attachmentID, paneID: attach.paneID, mode: attach.mode, controllerDeviceID: attach.mode == .observe ? nil : device))))
                 do {
                     try session.start(columns: attach.columns, rows: attach.rows, onOutput: { bytes in
-                        Task {
-                            let sequence = await terminalRegistry.nextOutputSequence(for: attachmentID)
-                            let frame = TerminalOutputFrame(attachmentID: attachmentID, sequence: sequence, bytes: bytes)
-                            try? await transport.send(Envelope(connectionID: request.connectionID, channelID: request.channelID, payload: .terminalOutput(frame)))
-                        }
+                        output.enqueue(bytes)
                     }, onClose: { error in
-                        Task {
+                        output.finish {
                             // A client release (or a connection teardown) removes the attachment before stopping
                             // the Herdr stream, so the stream ending afterwards is expected and is not reported.
                             // A pane that genuinely closes is reported on the attach channel with `phase: .terminal`;
@@ -1284,6 +1306,7 @@ private struct BridgeSelfCheck: Codable {
 private actor TerminalRegistry {
     struct Entry: Sendable {
         let session: any TerminalChannel
+        let output: TerminalOutputDelivery
         let mode: TerminalAttachMode
         /// The pane behind the attachment: a scroll has to know what it is scrolling.
         let paneID: String
@@ -1295,8 +1318,8 @@ private actor TerminalRegistry {
 
     private var entries: [UUID: Entry] = [:]
 
-    func add(_ session: any TerminalChannel, mode: TerminalAttachMode, id: UUID, paneID: String, columns: Int, rows: Int) {
-        entries[id] = Entry(session: session, mode: mode, paneID: paneID, columns: columns, rows: rows,
+    func add(_ session: any TerminalChannel, output: TerminalOutputDelivery, mode: TerminalAttachMode, id: UUID, paneID: String, columns: Int, rows: Int) {
+        entries[id] = Entry(session: session, output: output, mode: mode, paneID: paneID, columns: columns, rows: rows,
                             outputSequence: 0, acceptedInputSequence: -1)
     }
 
@@ -1309,8 +1332,8 @@ private actor TerminalRegistry {
 
     func entry(_ id: UUID) -> Entry? { entries[id] }
 
-    func nextOutputSequence(for id: UUID) -> Int {
-        guard var entry = entries[id] else { return 0 }
+    func nextOutputSequence(for id: UUID) -> Int? {
+        guard var entry = entries[id] else { return nil }
         let sequence = entry.outputSequence
         entry.outputSequence += 1
         entries[id] = entry
@@ -1323,12 +1346,18 @@ private actor TerminalRegistry {
         entries[id] = entry
     }
 
-    func remove(_ id: UUID) -> (any TerminalChannel)? { entries.removeValue(forKey: id)?.session }
+    func remove(_ id: UUID) -> (any TerminalChannel)? {
+        guard let entry = entries.removeValue(forKey: id) else { return nil }
+        entry.output.stop()
+        return entry.session
+    }
 
     func stopAll() {
-        let sessions = entries.values.map(\.session)
+        let active = Array(entries.values)
         entries.removeAll()
-        for session in sessions { try? session.release(); session.stop() }
+        // Wake any reader blocked by a slow transport before closing channels.
+        for entry in active { entry.output.stop() }
+        for entry in active { try? entry.session.release(); entry.session.stop() }
     }
 }
 
@@ -1513,7 +1542,9 @@ actor BridgeHostContext {
     }
 
     func makeChanges(sessionName: String?) async throws -> any RuntimeChanges {
-        try await hostRuntime(sessionName: sessionName).changes()
+        let runtime = try hostRuntime(sessionName: sessionName)
+        if await runtime.descriptor.kind == .native { try await runtime.ensureRunning() }
+        return await runtime.changes()
     }
 
     func createWorkspace(label: String, workingDirectory: String, agentKind: WorkspaceAgentKind, sessionName: String?) async throws -> WorkspaceCreationResult {
@@ -1664,7 +1695,7 @@ actor BridgeHostContext {
             let route = NotificationRoute(id: id, deviceID: deviceID, encryptionPublicKey: command.encryptionPublicKey,
                 publisherCapability: command.publisherCapability, gatewayURL: gatewayURL, expiresAt: expiresAt)
             try await notificationRoutes.put(route)
-            try NotificationWatcherInstallation.install(stateDirectory: stateDirectory)
+            try NotificationWatcherInstallation.install(stateDirectory: stateDirectory, runtimeKind: await detectedRuntimeDescriptor().kind)
         case .list:
             break
         case .revoke:
