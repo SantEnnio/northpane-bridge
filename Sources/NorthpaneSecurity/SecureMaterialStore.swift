@@ -92,18 +92,7 @@ public actor KeychainSecureMaterialStore: SecureMaterialStore {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700])
-            let keyURL = directory.appending(path: "key")
-            let bytes: Data
-            if FileManager.default.fileExists(atPath: keyURL.path) {
-                let values = try keyURL.resourceValues(forKeys: [.isSymbolicLinkKey])
-                guard values.isSymbolicLink != true else { throw SecureMaterialError.unavailable(-1) }
-                bytes = try Data(contentsOf: keyURL)
-            } else {
-                bytes = Data((0..<32).map { _ in UInt8.random(in: .min ... .max) })
-                try bytes.write(to: keyURL, options: .atomic)
-                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyURL.path)
-            }
-            guard bytes.count == 32 else { throw SecureMaterialError.unavailable(-1) }
+            let bytes = try SecureMaterialKeyFile.loadOrCreate(at: directory.appending(path: "key"))
             key = SymmetricKey(data: bytes)
         } catch {
             // Secure storage is fail-closed. A predictable fallback key would turn
