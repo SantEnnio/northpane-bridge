@@ -58,10 +58,12 @@ final class NativeTerminalChannel: TerminalChannel, @unchecked Sendable {
             // All callbacks use this reader queue, including the first frame.
             // Bounded output delivery may block here without blocking an actor.
             queue.async { [weak self] in
-                if self?.lock.withLock({ self?.stopped == false }) == true { onOutput(view.bytes) }
-                // A cancelled source must still be resumed before release.
-                timer.resume()
+                guard let self, self.lock.withLock({ !self.stopped }) else { return }
+                onOutput(view.bytes)
             }
+            // The first callback was queued before a poll can be scheduled on
+            // this serial queue. Resume even if stop already cancelled it.
+            timer.resume()
         } catch { connection.close(); throw error }
     }
 
