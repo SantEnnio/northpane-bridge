@@ -194,7 +194,8 @@ public enum AgentConversationReader {
         }
         let messages = result["messages"] as? [[String: Any]] ?? []
         return .init(agent: .claude, sessionID: request.sessionID, source: "Claude Agent SDK · transcript", version: "0.3.293", sessions: sessions,
-                     items: claudeItems(messages: messages), hasOlder: result["hasOlder"] as? Bool ?? false)
+                     items: claudeItems(messages: messages), hasOlder: result["hasOlder"] as? Bool ?? false,
+                     truncated: result["truncated"] as? Bool ?? false)
     }
     #endif
 

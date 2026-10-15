@@ -183,6 +183,12 @@ reads the existing V1 HTTP server of 1.18.x, accepting only numeric loopback
 origins with a port, refusing redirects, bounding response bytes and using Host
 environment authentication when present. No replacement server is launched.
 
+Claude histories up to 128 MiB are read through the SDK's own conversation-chain
+and compaction handling. Recent messages survive large histories; message bodies
+are shortened and the encoded response is budgeted before stdout, so a large tool
+result does not exhaust the subprocess pipe. Shortening is reported to the client.
+The input bound and subprocess timeout remain Host resource safeguards.
+
 Windows adapters and OpenCode V2 are currently unavailable. Large content and
 missing capabilities remain explicit in the result. Newest history windows are
 re-read as snapshots, not appended deltas, so compaction and repeated reads do
