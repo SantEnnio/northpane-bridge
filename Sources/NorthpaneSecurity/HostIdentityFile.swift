@@ -32,6 +32,7 @@ public enum HostIdentityFile {
                     guard document.schemaVersion == 2 else { throw HostIdentityFileError.corrupt }
                     let privateKey = try await secureStore.load(document.privateKeyReference)
                     _ = try P256.Signing.PrivateKey(rawRepresentation: privateKey)
+                    relaxFileProtection(of: data, at: fileURL)
                     return .init(hostID: document.hostID, privateKey: privateKey)
                 }
                 // One-time migration from the original file, which contained the
@@ -66,6 +67,21 @@ public enum HostIdentityFile {
     private static func write(_ document: Document, to fileURL: URL) throws {
         try JSONEncoder().encode(document).write(to: fileURL, options: protectedAtomicWriteOptions)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+    }
+
+    /// Brings a file written by an older Bridge down from complete protection. With complete
+    /// protection the file cannot be read while the Mac's screen is locked, so every Bridge started
+    /// then — a device reaching this Mac through its relay, a new SSH connection — exited before the
+    /// handshake, while sessions opened earlier kept working. The same bytes are written back through
+    /// the atomic path, which replaces the file with the new class (see Catalog.swift). Best effort:
+    /// it needs the screen unlocked once, which is when this read succeeds.
+    private static func relaxFileProtection(of contents: Data, at fileURL: URL) {
+#if os(iOS) || os(macOS) || os(tvOS) || os(watchOS)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+        guard (attributes?[.protectionKey] as? FileProtectionType) == .complete else { return }
+        try? contents.write(to: fileURL, options: protectedAtomicWriteOptions)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+#endif
     }
 
     /// Protection until first user authentication, not complete protection: the Bridge writes this

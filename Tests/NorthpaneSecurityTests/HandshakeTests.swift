@@ -26,6 +26,30 @@ import Testing
     #expect(permissions.intValue & 0o077 == 0)
 }
 
+#if os(macOS) || os(iOS)
+@Test func hostIdentityLeftAtCompleteProtectionIsReadableWhileLockedAfterTheNextLoad() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: "northpane-host-identity-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appending(path: "identity.json")
+    let store = InMemorySecureMaterialStore()
+    let made = try await HostIdentityFile.loadOrCreate(at: file, secureStore: store)
+    func protectionClass() throws -> FileProtectionType? {
+        try FileManager.default.attributesOfItem(atPath: file.path)[.protectionKey] as? FileProtectionType
+    }
+    // An identity written by an older Bridge, as found on a Mac on 2026-10-15.
+    let contents = try Data(contentsOf: file)
+    try contents.write(to: file, options: [.atomic, .completeFileProtection])
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    guard try protectionClass() == .complete else { return }  // a volume without data protection
+    let loaded = try await HostIdentityFile.loadOrCreate(at: file, secureStore: store)
+    #expect(loaded.hostID == made.hostID && loaded.privateKey == made.privateKey)
+    #expect(try protectionClass() == .completeUntilFirstUserAuthentication)
+    #expect(try Data(contentsOf: file) == contents)
+    let permissions = try #require(FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)
+    #expect(permissions.intValue & 0o077 == 0)
+}
+#endif
+
 @Test func hostPairingFilePersistsOnlyPublicDeviceMaterialAndGrant() async throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: "northpane-host-pairing-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
