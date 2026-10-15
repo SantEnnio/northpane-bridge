@@ -1,5 +1,23 @@
 # Third-party notices
 
+The read-only Claude conversation helper embeds the official
+[@anthropic-ai/claude-agent-sdk](https://github.com/anthropics/claude-agent-sdk-typescript)
+0.3.293 (Anthropic's published SDK terms; not covered by Northpane's MIT license)
+and [Bun](https://github.com/oven-sh/bun/tree/bun-v1.3.10) 1.3.10. Bun's MIT
+code statically incorporates JavaScriptCore/WebKit under LGPL-2 and the libraries
+listed in its upstream LICENSE.md. The helper source and reproducible build
+recipe live in `Integrations/claude-reader` and `Scripts/prepare-claude-reader.sh`;
+Bun and its patched WebKit sources are available from the upstream repository.
+
+Linux packages additionally embed Alpine 3.22 musl 1.2.5-r12 (MIT), libgcc and
+libstdc++ 14.2.0-r6 (GPL with GCC Runtime Library Exception). Exact package URLs
+and SHA-256 digests are in `Integrations/claude-reader/linux-libraries.json`.
+Their corresponding sources are musl 1.2.5 (https://musl.libc.org/releases/)
+and GCC 14.2.0 (https://gcc.gnu.org/releases.html), with Alpine packaging and
+patches at https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.22-stable/main.
+The reader only calls local session-file APIs; it neither authenticates to
+Anthropic nor starts a Claude process or model request.
+
 Northpane Bridge uses [SwiftProtobuf](https://github.com/apple/swift-protobuf),
 Copyright Apple Inc. and the SwiftProtobuf project authors, distributed under
 the Apache License 2.0. The dependency is pinned in `Package.swift` and

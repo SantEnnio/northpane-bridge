@@ -174,8 +174,10 @@ and WebSocket transport, initializes an observer, then calls `thread/list`,
 `thread/loaded/list`, `thread/read` and `thread/turns/list`. Only a loaded thread
 can be selected. It never starts a server, resumes a thread, subscribes to actions
 or answers server requests. Claude uses `listSessions`, `getSessionInfo` and
-`getSessionMessages` from the official Agent SDK 0.3.293, installed with Node.js
-18+ under `~/.northpane/integrations/claude-reader`. It reads CLI transcripts
+`getSessionMessages` from the official Agent SDK 0.3.293. Release binaries embed
+the reader and Bun 1.3.10; Hosts need no Node, npm, SDK installation or runtime
+download. On Linux the private musl loader, libgcc and libstdc++ are embedded too,
+so the reader does not depend on the distribution's C/C++ runtime. It reads CLI transcripts
 without invoking Claude; no diff is invented from Edit/Write inputs. OpenCode
 reads the existing V1 HTTP server of 1.18.x, accepting only numeric loopback
 origins with a port, refusing redirects, bounding response bytes and using Host
@@ -187,6 +189,26 @@ re-read as snapshots, not appended deltas, so compaction and repeated reads do
 not accumulate duplicate items. Conversation contents are not persisted or logged
 by the Bridge. The optional live Codex test is opt-in; ordinary tests use synthetic
 content only.
+
+Build-machine setup for a packaged reader: install Bun **1.3.10**, npm and
+Python 3, then use the normal platform packaging scripts. For a local source
+build on an Apple Silicon Mac:
+
+```sh
+export NORTHPANE_CLAUDE_READER_EXECUTABLE=$(sh Scripts/prepare-claude-reader.sh macos-arm64)
+swift build --product northpane-bridge
+.build/debug/northpane-bridge conversation-reader --self-check
+```
+
+The preparation script uses the npm lockfile, skips install scripts and optional
+Claude executables, disables runtime config loading, and embeds the resulting
+helper as opaque bytes inside the Bridge signature. Linux libraries have pinned
+URLs and SHA-256 digests. On first read those exact bytes are extracted into a
+private content-addressed Host directory, checked before reuse and restored if
+corrupt. Old directories remain usable by an older Bridge after rollback.
+Neither installation nor an update needs a second Host-side download.
+Source builds that omit the preparation step report the reader unavailable;
+the release packaging gate refuses to publish that state.
 
 Schema 24 adds optional automatic Pane resolution. The Herdr adapter reads
 `pane get` for a native `agent_session` ID; it never selects by cwd, title or

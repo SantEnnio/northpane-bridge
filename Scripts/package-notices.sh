@@ -9,9 +9,9 @@ fi
 mkdir -p "$output_directory"
 # Read only tracked license texts at the resolved revisions, including vendored
 # notices. Neutral archive metadata never identifies the build machine or user.
-python3 - "$checkout" "$repository_root/Package.resolved" "$output_directory/third-party-licenses.tar.gz" <<'PY'
+python3 - "$checkout" "$repository_root/Package.resolved" "$output_directory/third-party-licenses.tar.gz" "$repository_root" <<'PY'
 import gzip, io, json, pathlib, subprocess, sys, tarfile
-checkout, manifest, destination = map(pathlib.Path, sys.argv[1:])
+checkout, manifest, destination, repository = map(pathlib.Path, sys.argv[1:])
 pins = json.loads(manifest.read_text())["pins"]
 directories = {p.name.lower(): p for p in checkout.iterdir() if p.is_dir()}
 count = 0
@@ -34,5 +34,16 @@ with destination.open("wb") as output, gzip.GzipFile(filename="", fileobj=output
                 info.uid = info.gid = 0; info.uname = info.gname = ""
                 archive.addfile(info, io.BytesIO(body))
                 count += 1
+        reader = repository / "Integrations/claude-reader"
+        sdk = reader / "node_modules/@anthropic-ai/claude-agent-sdk"
+        for path in [reader / "BUN-LICENSE.md", reader / "reader.ts", reader / "package-lock.json",
+                     reader / "linux-libraries.json", sdk / "LICENSE.md", sdk / "README.md"]:
+            body = path.read_bytes()
+            name = "claude-reader/" + ("sdk/" if path.parent == sdk else "") + path.name
+            info = tarfile.TarInfo(name)
+            info.size = len(body); info.mode = 0o644; info.mtime = 0
+            info.uid = info.gid = 0; info.uname = info.gname = ""
+            archive.addfile(info, io.BytesIO(body))
+            count += 1
 print(f"Packaged {count} license texts from {len(pins)} resolved packages")
 PY

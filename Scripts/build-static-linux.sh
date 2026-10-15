@@ -22,6 +22,12 @@ sdk="$architecture-swift-linux-musl"
 
 export SWIFTTERM_EXCLUDE_APPLE=1
 export NORTHPANE_STATIC_LINUX_BUILD=1
+case "$architecture" in
+  x86_64) reader_platform=linux-x86_64 ;;
+  aarch64) reader_platform=linux-arm64 ;;
+esac
+NORTHPANE_CLAUDE_READER_EXECUTABLE=$(sh "$repository_root/Scripts/prepare-claude-reader.sh" "$reader_platform")
+export NORTHPANE_CLAUDE_READER_EXECUTABLE
 sh "$repository_root/Scripts/prepare-swiftterm-musl.sh"
 swift build --package-path "$repository_root" -c release --swift-sdk "$sdk" --product northpane-bridge
 binary="$(swift build --package-path "$repository_root" -c release --swift-sdk "$sdk" --show-bin-path)/northpane-bridge"
@@ -39,6 +45,7 @@ chmod 755 "$stripped"
 # A binary for this machine's architecture must start with nothing around it.
 if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "$architecture" ]; then
   env -i "$stripped" self-check --json > /dev/null
+  env -i "$stripped" conversation-reader --self-check
 fi
 
 gzip -9 -n -f "$stripped"

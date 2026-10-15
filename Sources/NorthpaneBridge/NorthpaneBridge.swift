@@ -92,6 +92,16 @@ struct NorthpaneBridge {
             return
         }
         switch arguments {
+        case ["conversation-reader", "--self-check"]:
+            #if os(macOS) || os(Linux)
+            guard AgentConversationReader.checkBundledClaudeReader() else {
+                FileHandle.standardError.write(Data("northpane-bridge: bundled conversation reader failed its self-check\n".utf8))
+                Foundation.exit(1)
+            }
+            print("Claude reader ready (SDK 0.3.293, Bun 1.3.10)")
+            #else
+            Foundation.exit(1)
+            #endif
         case ["--version"], ["version"]:
             print("northpane-bridge \(NorthpaneRelease.version) (protocol \(BridgeProtocol.major), schema \(BridgeProtocol.schemaRevision))")
         case ["self-check"], ["self-check", "--json"]:

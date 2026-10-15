@@ -16,6 +16,12 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.10'
       - uses: compnerd/gha-setup-swift@397094e75494a93fa8d81db0268dbc8f5d6cf7c6 # v0.4.1
         with:
           swift-version: swift-6.3.2-release
@@ -29,7 +35,11 @@ jobs:
         run: Scripts/check-protobuf.sh
       - name: Test
         timeout-minutes: 15
-        run: swift test
+        run: |
+          export NORTHPANE_CLAUDE_READER_EXECUTABLE=$(sh Scripts/prepare-claude-reader.sh "macos-$(uname -m)")
+          export NORTHPANE_STATE_DIRECTORY="$RUNNER_TEMP/reader-state"
+          python3 Scripts/check-claude-reader.py "$NORTHPANE_CLAUDE_READER_EXECUTABLE"
+          swift test
       - name: Bridge self-check
         run: swift run northpane-bridge self-check --json
       - name: Universal macOS package
@@ -76,10 +86,20 @@ jobs:
     container: swift:6.3.2-noble
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.10'
       - name: Install the Static Linux SDK
         run: swift sdk install "$STATIC_SDK_URL" --checksum "$STATIC_SDK_CHECKSUM"
       - name: Static Bridge, x86_64
         run: Scripts/build-static-linux.sh x86_64 artifacts
+      - name: Synthetic reader on Linux without system musl or JS runtimes
+        run: |
+          reader=$(sh Scripts/prepare-claude-reader.sh linux-x86_64)
+          python3 Scripts/check-claude-reader.py "$reader"
       - name: Static Bridge, arm64
         run: Scripts/build-static-linux.sh aarch64 artifacts
       - uses: actions/upload-artifact@v4

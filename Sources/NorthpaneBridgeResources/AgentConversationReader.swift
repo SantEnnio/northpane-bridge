@@ -178,31 +178,12 @@ public enum AgentConversationReader {
     }
 
     private static func claude(_ request: AgentConversationRequest, directory: String) throws -> AgentConversationReading {
-        guard let node = executable("node") else { return .init(agent: .claude, problem: .sdkMissing) }
-        // An explicitly installed Host integration, never resolution against the Workspace's
-        // node_modules. Loading an arbitrary project's package would execute its code.
-        let module = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".northpane/integrations/claude-reader/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs").path
-        guard FileManager.default.fileExists(atPath: module) else { return .init(agent: .claude, problem: .sdkMissing) }
-        let metadata = URL(fileURLWithPath: module).deletingLastPathComponent().appendingPathComponent("package.json")
-        guard let data = try? Data(contentsOf: metadata), let package = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              package["version"] as? String == "0.3.293" else { return .init(agent: .claude, problem: .unsupportedVersion) }
         guard request.sessionID.isEmpty || UUID(uuidString: request.sessionID) != nil else { return .init(agent: .claude, problem: .unreadable) }
-
-        let script = #"""
-        const [module, directory, id, limit] = process.argv.slice(1);
-        const {listSessions, getSessionMessages, getSessionInfo} = await import(module);
-        if (!id) console.log(JSON.stringify({sessions: await listSessions({dir: directory, limit: 50})}));
-        else {
-          const info = await getSessionInfo(id, {dir: directory});
-          if (!info) console.log(JSON.stringify({problem: "unreadable"}));
-          else if (info.fileSize > 16 * 1024 * 1024) console.log(JSON.stringify({problem: "outputTooLarge"}));
-          else {
-            const messages = await getSessionMessages(id, {dir: directory, includeSystemMessages: true});
-            console.log(JSON.stringify({messages: messages.slice(-Number(limit)), hasOlder: messages.length > Number(limit)}));
-          }
-        }
-        """#
-        let pipe = try AgentCLIConversation(executable: node, arguments: ["--max-old-space-size=128", "--input-type=module", "-e", script, module, directory, request.sessionID, String(min(20, max(2, request.limit)) * 10)], timeout: 12)
+        guard let reader = try BundledClaudeReader.executable() else { return .init(agent: .claude, problem: .sdkMissing) }
+        let invocation = BundledClaudeReader.invocation(reader,
+            arguments: [directory, request.sessionID, String(min(20, max(2, request.limit)) * 10)])
+        let pipe = try AgentCLIConversation(executable: invocation.executable, arguments: invocation.arguments,
+                                         environment: BundledClaudeReader.environment, timeout: 12)
         defer { pipe.finish() }
         guard let line = pipe.nextLine(), let result = try JSONSerialization.jsonObject(with: line) as? [String: Any] else { return .init(agent: .claude, problem: .unreadable) }
         if let code = result["problem"] as? String, let problem = AgentConversationReading.Problem(rawValue: code) { return .init(agent: .claude, problem: problem) }

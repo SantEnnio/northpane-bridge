@@ -3,3 +3,4 @@
 .release-artifacts/
 *.xcodeproj
 .DS_Store
+Integrations/claude-reader/node_modules/

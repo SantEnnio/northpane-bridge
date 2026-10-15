@@ -34,8 +34,18 @@ jobs:
     container: swift:6.3.2-noble
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.10'
       - run: swift sdk install "$STATIC_SDK_URL" --checksum "$STATIC_SDK_CHECKSUM"
       - run: Scripts/build-static-linux.sh x86_64 artifacts
+      - name: Verify the reader with bundled Linux libraries
+        run: |
+          reader=$(sh Scripts/prepare-claude-reader.sh linux-x86_64)
+          python3 Scripts/check-claude-reader.py "$reader"
       - run: Scripts/build-static-linux.sh aarch64 artifacts
       - name: The x86_64 binary reports the tagged version
         run: |
@@ -72,6 +82,16 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.10'
+      - name: Verify the standalone Claude reader without Host dependencies
+        run: |
+          reader=$(sh Scripts/prepare-claude-reader.sh "macos-$(uname -m)")
+          python3 Scripts/check-claude-reader.py "$reader"
       - uses: compnerd/gha-setup-swift@397094e75494a93fa8d81db0268dbc8f5d6cf7c6 # v0.4.1
         with:
           swift-version: swift-6.3.2-release

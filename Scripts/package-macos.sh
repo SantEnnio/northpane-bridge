@@ -14,6 +14,8 @@ set -x
 # One build per architecture, joined with lipo: a single multi-architecture build goes through the
 # Xcode build system, which rejects one of the package's dependencies.
 for arch in arm64 x86_64; do
+  NORTHPANE_CLAUDE_READER_EXECUTABLE=$(sh "$repository_root/Scripts/prepare-claude-reader.sh" "macos-$arch")
+  export NORTHPANE_CLAUDE_READER_EXECUTABLE
   swift build --package-path "$repository_root" --scratch-path "$repository_root/.build/$arch" -c release --arch "$arch" --product northpane-bridge
 done
 binary="$repository_root/.build/universal/northpane-bridge"
@@ -32,6 +34,7 @@ chmod 755 "$packaged"
 lipo -info "$packaged"
 lipo "$packaged" -verify_arch arm64 x86_64
 env -i "$packaged" self-check --json
+env -i "$packaged" conversation-reader --self-check
 gzip -9 -n -f "$packaged"
 (cd "$output_directory" && shasum -a 256 "northpane-bridge-macos-universal.gz" > "northpane-bridge-macos-universal.gz.sha256")
 echo "$packaged.gz"

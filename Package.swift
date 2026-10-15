@@ -5,6 +5,16 @@ import Foundation
 // Crypto's C++ objects need an explicit runtime when the dependency graph has
 // build-tool executables. Static SDK builds use libc++, GNU/Linux uses libstdc++.
 let linuxCxxRuntime = ProcessInfo.processInfo.environment["NORTHPANE_STATIC_LINUX_BUILD"] == "1" ? "c++" : "stdc++"
+// Packaging embeds one platform-specific, self-contained reader. Ordinary source
+// builds can omit it; release scripts require and verify it before publishing.
+let claudeReaderFile = ProcessInfo.processInfo.environment["NORTHPANE_CLAUDE_READER_EXECUTABLE"]
+let readerSettings: [CSetting] = claudeReaderFile.map {
+    let directory = URL(fileURLWithPath: $0).deletingLastPathComponent()
+    return [.define("NORTHPANE_CLAUDE_READER_FILE", to: "\"\($0)\"")] +
+        [("JS", "reader.mjs"), ("MUSL", "ld-musl.so"), ("GCC", "libgcc_s.so.1"), ("CXX", "libstdc++.so.6")].map { key, name in
+            .define("NORTHPANE_CLAUDE_READER_\(key)", to: "\"\(directory.appendingPathComponent(name).path)\"")
+        }
+} ?? []
 
 let package = Package(
     name: "northpane-bridge",
@@ -39,6 +49,7 @@ let package = Package(
         .target(name: "NorthpaneHostRuntime", dependencies: ["NorthpaneProtocol"]),
         .target(name: "NorthpanePTY", linkerSettings: [.linkedLibrary("util", .when(platforms: [.linux]))]),
         .target(name: "NorthpaneRuntimeIPC"),
+        .target(name: "NorthpaneEmbeddedReader", cSettings: readerSettings),
         .target(name: "NorthpaneNativeRuntime", dependencies: [
             "NorthpaneHostRuntime", .product(name: "SwiftTerm", package: "SwiftTerm"),
             .product(name: "Crypto", package: "swift-crypto"),
@@ -48,7 +59,9 @@ let package = Package(
         ]),
         .target(name: "NorthpaneHerdrIntegration", dependencies: ["NorthpaneProtocol", "NorthpaneProjection", "NorthpaneHostRuntime"]),
         .target(name: "NorthpaneSecurity", dependencies: ["NorthpaneProtocol", .product(name: "Crypto", package: "swift-crypto")], linkerSettings: [.linkedFramework("Security", .when(platforms: [.iOS, .macOS])), .linkedLibrary(linuxCxxRuntime, .when(platforms: [.linux]))]),
-        .target(name: "NorthpaneBridgeResources", dependencies: ["NorthpaneProtocol", "NorthpaneProjection", "NorthpaneSecurity", .product(name: "Crypto", package: "swift-crypto")]),
+        .target(name: "NorthpaneBridgeResources", dependencies: ["NorthpaneProtocol", "NorthpaneProjection", "NorthpaneSecurity", .product(name: "Crypto", package: "swift-crypto"),
+            .target(name: "NorthpaneEmbeddedReader", condition: .when(platforms: [.macOS, .linux])),
+        ]),
         .target(name: "NorthpaneConnection", dependencies: [
             "NorthpaneProtocol", "NorthpaneProjection", "NorthpaneSecurity",
             .product(name: "Crypto", package: "swift-crypto"),
