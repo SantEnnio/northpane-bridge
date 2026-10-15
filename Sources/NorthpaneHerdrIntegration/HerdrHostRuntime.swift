@@ -11,6 +11,7 @@ public actor HerdrHostRuntime: HostRuntime {
     private let sessionName: String?
     private let incarnationID: String
     private let activity: any PaneActivityReading
+    private let claudeSessions: ClaudeSessionRecords
     private var serverProcess: Process?
     private var version: String?
 
@@ -23,14 +24,16 @@ public actor HerdrHostRuntime: HostRuntime {
         self.sessionName = sessionName.flatMap { $0.isEmpty ? nil : $0 }
         self.incarnationID = incarnationID
         self.activity = activity
+        claudeSessions = .standard()
         runtime = HerdrRuntime(runner: runner, incarnationID: incarnationID, activity: activity)
     }
 
     /// Allows adapter conformance tests to exercise commands without launching Herdr.
     init(runner: any HerdrCommandRunning, executableURL: URL, sessionName: String?,
-         incarnationID: String, activity: any PaneActivityReading = PaneActivityProbe()) {
+         incarnationID: String, activity: any PaneActivityReading = PaneActivityProbe(),
+         claudeSessions: ClaudeSessionRecords = .standard()) {
         self.runner = runner; self.executableURL = executableURL; self.sessionName = sessionName
-        self.incarnationID = incarnationID; self.activity = activity
+        self.incarnationID = incarnationID; self.activity = activity; self.claudeSessions = claudeSessions
         runtime = HerdrRuntime(runner: runner, incarnationID: incarnationID, activity: activity)
     }
 
@@ -112,6 +115,15 @@ public actor HerdrHostRuntime: HostRuntime {
             }
             if identities.count == processes.count {
                 proof = terminal + ":" + identities.sorted().joined(separator: ",")
+            }
+            // Claude records the chat its own process shows, and rewrites it on /clear and /resume;
+            // Herdr's reference waits for its hook. The terminal's foreground group leader is the TUI.
+            if agent.lowercased() == "claude" {
+                let pids = processes.compactMap { $0["pid"] as? Int32 }
+                let leader = (info["foreground_process_group_id"] as? Int32).flatMap { pids.contains($0) ? $0 : nil }
+                let recorded = leader.map { [$0] } ?? pids
+                let ids = Set(recorded.compactMap { claudeSessions.sessionID(pid: $0) })
+                if ids.count == 1 { sessionID = ids.first }
             }
         }
         return .init(agent: agent.lowercased(), sessionID: sessionID, processProof: proof)

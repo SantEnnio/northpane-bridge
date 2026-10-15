@@ -229,3 +229,12 @@ the result. macOS and Linux provide birth proofs; other platforms cannot persist
 a manual association without one. In-agent session switching without a native
 reference is not certified: the official integration is needed for that continuity.
 Missing bindings return `paneNotLinked`, never an arbitrary folder history.
+
+For Claude Code panes the adapter also reads the record Claude keeps for each
+running interactive process, `~/.claude/sessions/<pid>.json` (or under
+`CLAUDE_CONFIG_DIR`). It is used only for the terminal's foreground process, and
+only when the record's PID and start time match that process' OS birth, so a
+reused PID never inherits a chat. Claude rewrites the record on `/clear` and
+`/resume` before any new input, so no hook installation is needed for this link.
+The file is not a documented Claude interface: an unknown shape reads as no
+record, and the Herdr reference (if any) is used instead.
