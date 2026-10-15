@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix="northpane-reader-") as temporary:
     parent = large["uuid"]
     for index in range(60):
         entry = dict(common, uuid=str(uuid.uuid4()), parentUuid=parent, type="assistant",
-                     message={"role": "assistant", "content": [{"type": "text", "text": f"Recent message {index}"}]})
+                     message={"role": "assistant", "content": [{"type": "text", "text": f"Recent message {index} " + "x" * 24_000}]})
         history.append(entry)
         parent = entry["uuid"]
     transcript.write_text("".join(json.dumps(row) + "\n" for row in history))

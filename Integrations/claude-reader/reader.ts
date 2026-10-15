@@ -2,6 +2,13 @@ import { listSessions, getSessionInfo, getSessionMessages } from "@anthropic-ai/
 
 // Only local session-file APIs. Never import query(), start Claude, or resume a session.
 const version = "0.3.293";
+async function respond(value: unknown) {
+  // console.log can leave only the first pipe buffer written at process exit.
+  // Wait for the complete bounded response, including backpressure.
+  await new Promise<void>((resolve, reject) => {
+    process.stdout.write(JSON.stringify(value) + "\n", error => error ? reject(error) : resolve());
+  });
+}
 // The SDK owns transcript discovery, compaction and parentUuid chain selection.
 // Bound presentation data BEFORE stdout: a single tool result can exceed the pipe.
 function presentation(messages: Awaited<ReturnType<typeof getSessionMessages>>, limit: number) {
@@ -42,7 +49,7 @@ function presentation(messages: Awaited<ReturnType<typeof getSessionMessages>>, 
 }
 const [directory, id, rawLimit] = process.argv.slice(2);
 if (directory === "--version") {
-  console.log(JSON.stringify({ sdk: version, runtime: Bun.version }));
+  await respond({ sdk: version, runtime: Bun.version });
 } else {
   try {
     const limit = Number(rawLimit);
@@ -53,21 +60,21 @@ if (directory === "--version") {
     }
     const options = directory ? { dir: directory } : {};
     if (!id) {
-      console.log(JSON.stringify({ sessions: await listSessions({ ...options, limit: 50 }) }));
+      await respond({ sessions: await listSessions({ ...options, limit: 50 }) });
     } else {
       const info = await getSessionInfo(id, options);
-      if (!info) console.log(JSON.stringify({ problem: "unreadable" }));
+      if (!info) await respond({ problem: "unreadable" });
       // Larger ordinary histories still use the official SDK's compaction handling.
       // This is a Host-work bound, separate from the much smaller output budget.
-      else if (info.fileSize > 128 * 1024 * 1024) console.log(JSON.stringify({ problem: "outputTooLarge" }));
+      else if (info.fileSize > 128 * 1024 * 1024) await respond({ problem: "outputTooLarge" });
       else {
         const messages = await getSessionMessages(id, { ...options, includeSystemMessages: true });
-        console.log(JSON.stringify(presentation(messages, limit)));
+        await respond(presentation(messages, limit));
       }
     }
   } catch {
     // Never put transcript contents, paths or SDK exception details on stderr.
-    console.log(JSON.stringify({ problem: "unreadable" }));
+    await respond({ problem: "unreadable" });
     process.exitCode = 1;
   }
 }

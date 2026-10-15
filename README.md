@@ -187,6 +187,7 @@ Claude histories up to 128 MiB are read through the SDK's own conversation-chain
 and compaction handling. Recent messages survive large histories; message bodies
 are shortened and the encoded response is budgeted before stdout, so a large tool
 result does not exhaust the subprocess pipe. Shortening is reported to the client.
+The helper waits for stdout to finish writing before exiting, including pipe backpressure.
 The input bound and subprocess timeout remain Host resource safeguards.
 
 Windows adapters and OpenCode V2 are currently unavailable. Large content and
