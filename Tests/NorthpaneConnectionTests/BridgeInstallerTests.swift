@@ -52,6 +52,16 @@ private func signedArtifact(data: Data) throws -> BridgeReleaseArtifact {
     #expect(await deployment.calls.contains("rollback:0.9.0"))
 }
 
+@Test func bridgeInstallerAcceptsTheLargerLocallyTrustedBridgeWithItsBundledReader() async throws {
+    // Compressed downloads keep their existing limit. The app's uncompressed
+    // universal binary now also contains both reader runtimes.
+    let data = Data(repeating: 0, count: RemoteBridgeInstaller.maximumArtifactBytes + 1)
+    let deployment = FakeDeployment()
+    let activation = try await RemoteBridgeInstaller().installLocallyTrusted(data, version: "1.0.0", platform: "macos-arm64", using: deployment) {}
+    #expect(activation.version == "1.0.0")
+    #expect(await deployment.calls.first == "upload:1.0.0:\(data.count)")
+}
+
 @Test func bridgeInstallerRejectsTamperedDownloadBeforeUpload() async throws {
     let artifact = try signedArtifact(data: Data("bridge".utf8)); let deployment = FakeDeployment()
     await #expect(throws: BridgeInstallationError.digestMismatch) {

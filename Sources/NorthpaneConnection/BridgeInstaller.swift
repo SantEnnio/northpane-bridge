@@ -72,6 +72,9 @@ public protocol RemoteBridgeDeploymentAdapter: Sendable {
 
 public actor RemoteBridgeInstaller {
     public static let maximumArtifactBytes = 100 * 1_024 * 1_024
+    /// A signed app's raw universal Bridge also contains both reader runtimes.
+    /// Compressed downloads retain the smaller limit above.
+    public static let maximumLocallyTrustedArtifactBytes = 256 * 1_024 * 1_024
     private let session: URLSession
 
     public init() {
@@ -123,7 +126,7 @@ public actor RemoteBridgeInstaller {
         verifyActivatedBridge: @escaping @Sendable () async throws -> Void
     ) async throws -> BridgeActivation {
         guard version.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"#, options: .regularExpression) != nil else { throw BridgeInstallationError.invalidManifest }
-        guard !data.isEmpty, data.count <= Self.maximumArtifactBytes else { throw BridgeInstallationError.oversizedArtifact }
+        guard !data.isEmpty, data.count <= Self.maximumLocallyTrustedArtifactBytes else { throw BridgeInstallationError.oversizedArtifact }
         let hostPlatform = try await deployment.platformIdentifier()
         guard hostPlatform == platform else { throw BridgeInstallationError.platformMismatch(host: hostPlatform, bridge: platform) }
         return try await deploy(data, version: version, using: deployment, verifyActivatedBridge: verifyActivatedBridge)
