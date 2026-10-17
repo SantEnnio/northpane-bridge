@@ -148,14 +148,18 @@ public enum WorkspaceFileReader {
         let name = name.lowercased()
         return name == ".git" || name.hasPrefix(".env")
             || [".ssh", ".aws", ".gnupg", ".kube", ".docker", ".password-store", "keychains", "cookies", ".northpane"].contains(name)
-            || ["id_rsa", "id_ed25519", "id_ecdsa", ".netrc", "credentials", "credentials.json", ".npmrc", ".pypirc", "hosts.yml"].contains(name)
+            || ["id_rsa", "id_ed25519", "id_ecdsa", ".netrc", "credentials", "credentials.json", ".npmrc", ".pypirc", "hosts.yml", "auth.json", ".credentials.json", ".git-credentials", "oauth_creds.json", "credentials.db", "access_tokens.db", "application_default_credentials.json"].contains(name)
             || name.hasSuffix(".pem") || name.hasSuffix(".p12") || name.hasSuffix(".key") || name.hasSuffix(".keychain") || name.hasSuffix(".keychain-db")
     }
 
     static func validateComponentNames(_ components: [String]) throws {
         let lowered = components.map { $0.lowercased() }
         if lowered.contains(where: isRefusedComponent) { throw WorkspaceFileError.secretMaterial }
-        if lowered.count >= 3, lowered[0] == ".local", lowered[1] == "share", lowered[2] == "northpane" { throw WorkspaceFileError.secretMaterial }
+        if lowered.count >= 3 {
+            for index in 0...(lowered.count - 3) where lowered[index] == ".local" && lowered[index + 1] == "share" && lowered[index + 2] == "northpane" {
+                throw WorkspaceFileError.secretMaterial
+            }
+        }
     }
 
     static func containsSecret(text: String) -> Bool {

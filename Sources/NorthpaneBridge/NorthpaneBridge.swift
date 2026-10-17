@@ -306,6 +306,7 @@ struct NorthpaneBridge {
         var eventSubscription: (any RuntimeChanges)?
         let terminalRegistry = TerminalRegistry()
         let previewTunnels = PreviewTunnelRegistry()
+        let fileDownloads = WorkspaceFileDownloads()
         defer {
             eventSubscription?.stop()
             Task { await terminalRegistry.stopAll() }
@@ -1026,7 +1027,7 @@ struct NorthpaneBridge {
                 // needs the same grant as typing into it. Searching those same roots by name
                 // reveals strictly less than reading does, and the answer is normally pasted
                 // into the pane, so it is held to the same grant rather than a weaker one.
-                case .readWorkspaceFile, .searchWorkspacePaths, .readAgentConversation: .terminalControl
+                case .readWorkspaceFile, .searchWorkspacePaths, .readAgentConversation, .listWorkspaceDirectory, .downloadWorkspaceFile: .terminalControl
                 // Folder names under roots the search already answers for: the same grant.
                 case .listHostDirectories: .terminalControl
                 // A screenshot shows whatever the Host's screen shows, which is more than any
@@ -1049,6 +1050,32 @@ struct NorthpaneBridge {
                         throw Problem.unauthorized
                     }
                     switch command.kind {
+                    case .listWorkspaceDirectory, .downloadWorkspaceFile:
+                        guard request.schemaRevision >= 26, command.query == snapshot.incarnationID,
+                              let pane = snapshot.panes.first(where: { $0.id == command.paneID && $0.workspaceID == command.workspaceID }),
+                              let workspace = snapshot.workspaces.first(where: { $0.id == command.workspaceID }) else { throw Problem.malformedFrame }
+                        let root = WorkspaceRootResolver.root(worktreePath: workspace.worktreePath,
+                            paneDirectories: snapshot.panes.filter { $0.workspaceID == workspace.id }.compactMap(\.cwd))
+                        // File I/O must not occupy the serial receive loop carrying terminal input.
+                        Task.detached {
+                            let payload: EnvelopePayload
+                            do {
+                                if command.kind == .listWorkspaceDirectory {
+                                    payload = .resourceResult(.init(commandID: command.commandID, directoryListing:
+                                        try WorkspacePathInspection.list(path: command.path, cwd: pane.cwd, workspaceRoot: root)))
+                                } else {
+                                    payload = .resourceResult(try await fileDownloads.chunk(command, cwd: pane.cwd,
+                                        workspaceRoot: root, incarnation: snapshot.incarnationID))
+                                }
+                            } catch let error as WorkspaceFileError {
+                                payload = .problem(WorkspacePathInspection.problem(for: error))
+                            } catch let problem as Problem { payload = .problem(problem) }
+                            catch { payload = .problem(.init(code: "workspace_file_unreadable", locus: .bridge,
+                                retry: .afterUserAction, recoveryAction: "reviewResourceAndRetry", phase: .resource)) }
+                            try? await transport.send(Envelope(protocolMajor: request.protocolMajor, schemaRevision: request.schemaRevision,
+                                connectionID: request.connectionID, channelID: request.channelID, messageID: request.messageID, payload: payload))
+                        }
+                        continue
                     case .readAgentConversation:
                         guard request.schemaRevision >= 23, command.query == snapshot.incarnationID,
                               let pane = snapshot.panes.first(where: { $0.id == command.paneID }),
@@ -1757,7 +1784,7 @@ actor BridgeHostContext {
 
     func handleResource(_ command: ResourceCommand, transportKind: TransportKind, snapshot: WireRuntimeSnapshot) async throws -> ResourceResult {
         switch command.kind {
-        case .readAgentConversation:
+        case .readAgentConversation, .listWorkspaceDirectory, .downloadWorkspaceFile:
             throw resourceProblem("conversation_requires_bound_observation")
         case .listResources:
             var descriptors = await previewStore.list().map(previewDescriptor)

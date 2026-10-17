@@ -400,6 +400,13 @@ enum ResourceCommandKind {
   // Revision 24: optional Pane resolution and explicit process-bound association in JSON.
   // pane_id and query (runtime incarnation) bind observation to a current Pane.
   READ_AGENT_CONVERSATION = 22;
+  // Revision 26: list immediate files/folders within the existing file-read roots.
+  // path is resolved using pane_id; result.directory_listing describes the resolved location.
+  LIST_WORKSPACE_DIRECTORY = 23;
+  // Revision 26: bounded original file bytes, including binary files. The first request has
+  // offset 0 and no stream_id; its response returns a session-owned immutable snapshot handle.
+  // Subsequent chunks repeat path/pane/workspace and stream_id. Handles expire after 2 minutes.
+  DOWNLOAD_WORKSPACE_FILE = 24;
 }
 enum ResourceKind {
   RESOURCE_KIND_UNSPECIFIED = 0;
@@ -470,6 +477,15 @@ message ResourceResult {
   bool truncated = 16;
   repeated ResourceCaptureTarget capture_targets = 17;
   repeated AgentUsage agent_usage = 18;
+  WorkspaceDirectoryListing directory_listing = 19;
+}
+message WorkspaceDirectoryListing {
+  string path = 1;
+  string parent_path = 2;
+  string root_path = 3;
+  repeated ResourcePathHit entries = 4;
+  uint64 omitted_entries = 5;
+  bool truncated = 6;
 }
 message ResourceFile { string relative_path = 1; uint64 byte_count = 2; string content_digest = 3; }
 // One entry SEARCH_WORKSPACE_PATHS matched. `path` is absolute on the Host and is what the

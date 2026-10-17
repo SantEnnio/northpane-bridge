@@ -277,6 +277,46 @@ public actor NorthpaneBridgeClient {
                      truncated: result.truncated)
     }
 
+    /// Revision 26: read-only immediate children under the file-read roots. The runtime and
+    /// Pane must still be the context in which inspection was opened.
+    public func listWorkspaceDirectory(path: String, paneID: String, workspaceID: String, incarnationID: String) async throws -> WorkspaceDirectoryListing {
+        guard let accepted, accepted.schemaRevision >= 26 else { throw Problem.incompatibleProtocol }
+        let result = try await performResourceCommand(.init(kind: .listWorkspaceDirectory, workspaceID: workspaceID,
+            path: path, paneID: paneID, query: incarnationID))
+        guard let listing = result.directoryListing else { throw Problem.malformedFrame }
+        return listing
+    }
+
+    public func downloadWorkspaceFile(path: String, paneID: String, workspaceID: String, incarnationID: String) async throws -> WorkspaceFileDownload {
+        guard let accepted, accepted.schemaRevision >= 26 else { throw Problem.incompatibleProtocol }
+        var data = Data(), handle: UUID?, total: Int?, resolved = "", mediaType = "", isText = false
+        do {
+            repeat {
+                try Task.checkCancellation()
+                let result = try await performResourceCommand(.init(kind: .downloadWorkspaceFile, workspaceID: workspaceID,
+                    path: path, offset: data.count, length: 768 * 1_024, streamID: handle, paneID: paneID, query: incarnationID))
+                if handle == nil {
+                    handle = result.streamID; total = result.totalBytes; resolved = result.relativePath
+                    mediaType = result.mediaType; isText = result.isText
+                }
+                guard handle != nil, result.streamID == handle, result.totalBytes == total,
+                      result.relativePath == resolved, result.mediaType == mediaType,
+                      result.totalBytes <= 32 * 1_024 * 1_024, result.totalBytes >= data.count + result.body.count,
+                      !result.body.isEmpty || result.totalBytes == 0 else { throw Problem.malformedFrame }
+                data.append(result.body)
+                try Task.checkCancellation()
+                guard result.isFinal == (data.count == total) else { throw Problem.malformedFrame }
+                if result.isFinal { return .init(relativePath: resolved, mediaType: mediaType, isText: isText, data: data) }
+            } while true
+        } catch {
+            if let handle {
+                _ = try? await performResourceCommand(.init(kind: .downloadWorkspaceFile, workspaceID: workspaceID, path: path,
+                    method: "DELETE", streamID: handle, paneID: paneID, query: incarnationID))
+            }
+            throw error
+        }
+    }
+
     /// Lists the folders inside one folder of the Host, `nil` meaning the Host user's home, so a
     /// place for a new Workspace can be walked to. Needs schema revision 16; an older Bridge has
     /// no such command and is refused locally.

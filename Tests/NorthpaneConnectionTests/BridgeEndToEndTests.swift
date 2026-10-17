@@ -495,6 +495,18 @@ private final class TestCertificateDelegate: NSObject, URLSessionDelegate, @unch
     #expect(cited.data == Data("# Cited\n".utf8))
     await #expect(throws: Problem.self) { try await client.readWorkspaceFile(path: "../../etc/passwd", paneID: "pane-1", workspaceID: "workspace-1") }
 
+    // Revision 26: directory navigation and original binary downloads cross the real wire.
+    let binary = Data((0..<900_000).map { UInt8(truncatingIfNeeded: $0) })
+    try binary.write(to: worktree.appending(path: "docs/blob.bin"))
+    let listing = try await client.listWorkspaceDirectory(path: ".", paneID: "pane-1", workspaceID: "workspace-1", incarnationID: snapshot.incarnationID)
+    #expect(listing.entries.contains { $0.relativePath == "blob.bin" && $0.byteCount == binary.count })
+    let original = try await client.downloadWorkspaceFile(path: "blob.bin", paneID: "pane-1", workspaceID: "workspace-1", incarnationID: snapshot.incarnationID)
+    #expect(original.data == binary)
+    #expect(!original.isText)
+    await #expect(throws: Problem.self) {
+        try await client.listWorkspaceDirectory(path: ".", paneID: "pane-1", workspaceID: "workspace-1", incarnationID: "obsolete")
+    }
+
     // Schema revision 7: the same roots can be searched by name, and the answer carries names
     // and metadata only. The file just written is inside the worktree, so it is findable.
     try FileManager.default.createDirectory(at: worktree.appending(path: "docs/cited-folder"), withIntermediateDirectories: true)

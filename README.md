@@ -63,6 +63,21 @@ resurrect agents. The public handshake reports runtime kind/version in schema 25
 Agent status comes from [process-scoped hooks](Docs/native-agent-hooks.md), without
 changing global provider configuration or bypassing provider trust and permissions.
 
+## Read-only file inspection
+
+Schema 26 adds immediate directory listings and original-file downloads within
+Workspace, home and temporary roots, using the Standard control grant. Relative
+paths are resolved against a current Pane; the runtime incarnation and Workspace
+are checked with every request. Symbolic links/reparse points below allowed roots,
+credential stores and recognizable secret material are refused.
+
+A listing returns at most 500 entries and explicitly reports omissions and
+truncation. A download is capped at 32 MiB. Its chunks come from an immutable,
+session-owned byte snapshot, expire after two minutes, and can be cancelled.
+Inspection never writes into the inspected filesystem. File I/O runs outside the
+serial terminal receive loop. Clients can assemble bounded recursive downloads
+from these operations without running an archive command on the Host.
+
 ## Agent plan usage
 
 When an app asks, the Bridge says how much of the agent subscriptions on the Host has been

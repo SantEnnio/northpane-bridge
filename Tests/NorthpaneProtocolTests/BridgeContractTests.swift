@@ -204,3 +204,18 @@ import Testing
     #expect(decoded.schemaRevision == 23)
     #expect(decoded.payload == .resourceCommand(command))
 }
+
+@Test func fileInspectionRoundTripsThroughRevision26() throws {
+    let listing = WorkspaceDirectoryListing(path: "/work/docs", parentPath: "/work", rootPath: "/work",
+        entries: [.init(path: "/work/docs/report.md", relativePath: "report.md", rootLabel: "", isDirectory: false, byteCount: 42, modified: nil)],
+        omittedEntries: 3, truncated: true)
+    let result = ResourceResult(commandID: UUID(), directoryListing: listing)
+    let envelope = Envelope(connectionID: ConnectionID(), channelID: ChannelID(), payload: .resourceResult(result))
+    #expect(try FrameCodec.decode(FrameCodec.encode(envelope)).payload == .resourceResult(result))
+    for kind in [ResourceCommandKind.listWorkspaceDirectory, .downloadWorkspaceFile] {
+        let command = ResourceCommand(kind: kind, workspaceID: "w1", path: "docs/report.md", offset: 12,
+            length: 42, streamID: UUID(), paneID: "p1", query: "incarnation")
+        let envelope = Envelope(connectionID: ConnectionID(), channelID: ChannelID(), payload: .resourceCommand(command))
+        #expect(try FrameCodec.decode(FrameCodec.encode(envelope)).payload == .resourceCommand(command))
+    }
+}

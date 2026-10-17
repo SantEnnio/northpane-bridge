@@ -337,6 +337,10 @@ public enum ResourceCommandKind: String, Codable, Sendable {
     case readAgentConversation
     /// Schema revision 18: accept or withdraw, for this Host, what reading one agent implies.
     case setAgentUsageConsent
+    /// Schema revision 26: immediate children, under the existing file-read roots.
+    case listWorkspaceDirectory
+    /// Schema revision 26: immutable, session-owned download of one bounded original file.
+    case downloadWorkspaceFile
 }
 public enum ResourceKind: String, Codable, Sendable { case preview, artifact }
 public enum ViewerAvailability: String, Codable, Sendable { case available, none, unknown }
@@ -428,11 +432,12 @@ public struct ResourceResult: Equatable, Codable, Sendable {
     public let captureTargets: [ResourceCaptureTarget]
     /// What `readAgentUsage` found, one entry per agent CLI on the Host.
     public let agentUsage: [AgentUsage]
-    public init(commandID: UUID, resources: [ResourceDescriptor] = [], statusCode: Int = 0, headers: [HTTPHeader] = [], body: Data = Data(), relativePath: String = "", mediaType: String = "", deleted: Bool = false, totalBytes: Int = 0, files: [ResourceFile] = [], streamID: UUID? = nil, sequence: Int = 0, isFinal: Bool = false, isText: Bool = false, pathHits: [ResourcePathHit] = [], truncated: Bool = false, captureTargets: [ResourceCaptureTarget] = [], agentUsage: [AgentUsage] = []) {
+    public let directoryListing: WorkspaceDirectoryListing?
+    public init(commandID: UUID, resources: [ResourceDescriptor] = [], statusCode: Int = 0, headers: [HTTPHeader] = [], body: Data = Data(), relativePath: String = "", mediaType: String = "", deleted: Bool = false, totalBytes: Int = 0, files: [ResourceFile] = [], streamID: UUID? = nil, sequence: Int = 0, isFinal: Bool = false, isText: Bool = false, pathHits: [ResourcePathHit] = [], truncated: Bool = false, captureTargets: [ResourceCaptureTarget] = [], agentUsage: [AgentUsage] = [], directoryListing: WorkspaceDirectoryListing? = nil) {
         self.commandID = commandID; self.resources = resources; self.statusCode = statusCode; self.headers = headers
         self.body = body; self.relativePath = relativePath; self.mediaType = mediaType; self.deleted = deleted; self.totalBytes = totalBytes; self.files = files
         self.streamID = streamID; self.sequence = sequence; self.isFinal = isFinal; self.isText = isText
-        self.pathHits = pathHits; self.truncated = truncated; self.captureTargets = captureTargets; self.agentUsage = agentUsage
+        self.pathHits = pathHits; self.truncated = truncated; self.captureTargets = captureTargets; self.agentUsage = agentUsage; self.directoryListing = directoryListing
     }
 }
 
@@ -627,4 +632,19 @@ public struct NotificationRouteResult: Equatable, Codable, Sendable {
     public let commandID: UUID
     public let routes: [NotificationRouteDescriptor]
     public init(commandID: UUID, routes: [NotificationRouteDescriptor]) { self.commandID = commandID; self.routes = routes }
+}
+
+/// One confined location on the Host. An omitted count describes entries whose names or
+/// metadata were refused; truncated means the listing budget was reached.
+public struct WorkspaceDirectoryListing: Equatable, Codable, Sendable {
+    public let path: String
+    public let parentPath: String?
+    public let rootPath: String
+    public let entries: [ResourcePathHit]
+    public let omittedEntries: Int
+    public let truncated: Bool
+    public init(path: String, parentPath: String?, rootPath: String, entries: [ResourcePathHit], omittedEntries: Int = 0, truncated: Bool = false) {
+        self.path = path; self.parentPath = parentPath; self.rootPath = rootPath
+        self.entries = entries; self.omittedEntries = omittedEntries; self.truncated = truncated
+    }
 }

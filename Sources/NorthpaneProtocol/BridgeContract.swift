@@ -1,12 +1,12 @@
 import Foundation
 
 public enum NorthpaneRelease {
-    public static let version = "1.0.21"
+    public static let version = "1.0.22"
 }
 
 public enum BridgeProtocol {
     public static let major = 1
-    public static let schemaRevision = 25
+    public static let schemaRevision = 26
     public static let nativeRuntimeRevision = 25
     /// LIST_HOST_DIRECTORIES on Windows accepts `/` as the virtual computer and returns logical
     /// drive paths. Drive roots return `/` as their parent. It is not a Workspace working directory.

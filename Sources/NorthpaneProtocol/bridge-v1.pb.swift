@@ -607,6 +607,15 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
   /// Revision 24: optional Pane resolution and explicit process-bound association in JSON.
   /// pane_id and query (runtime incarnation) bind observation to a current Pane.
   case readAgentConversation // = 22
+
+  /// Revision 26: list immediate files/folders within the existing file-read roots.
+  /// path is resolved using pane_id; result.directory_listing describes the resolved location.
+  case listWorkspaceDirectory // = 23
+
+  /// Revision 26: bounded original file bytes, including binary files. The first request has
+  /// offset 0 and no stream_id; its response returns a session-owned immutable snapshot handle.
+  /// Subsequent chunks repeat path/pane/workspace and stream_id. Handles expire after 2 minutes.
+  case downloadWorkspaceFile // = 24
   case UNRECOGNIZED(Int)
 
   init() {
@@ -638,6 +647,8 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
     case 20: self = .readAgentUsage
     case 21: self = .setAgentUsageConsent
     case 22: self = .readAgentConversation
+    case 23: self = .listWorkspaceDirectory
+    case 24: self = .downloadWorkspaceFile
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -667,6 +678,8 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
     case .readAgentUsage: return 20
     case .setAgentUsageConsent: return 21
     case .readAgentConversation: return 22
+    case .listWorkspaceDirectory: return 23
+    case .downloadWorkspaceFile: return 24
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -696,6 +709,8 @@ nonisolated enum Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf.Enum, Sw
     .readAgentUsage,
     .setAgentUsageConsent,
     .readAgentConversation,
+    .listWorkspaceDirectory,
+    .downloadWorkspaceFile,
   ]
 
 }
@@ -2319,11 +2334,42 @@ nonisolated struct Northpane_Bridge_V1_ResourceResult: @unchecked Sendable {
     set {_uniqueStorage()._agentUsage = newValue}
   }
 
+  var directoryListing: Northpane_Bridge_V1_WorkspaceDirectoryListing {
+    get {_storage._directoryListing ?? Northpane_Bridge_V1_WorkspaceDirectoryListing()}
+    set {_uniqueStorage()._directoryListing = newValue}
+  }
+  /// Returns true if `directoryListing` has been explicitly set.
+  var hasDirectoryListing: Bool {_storage._directoryListing != nil}
+  /// Clears the value of `directoryListing`. Subsequent reads from it will return its default value.
+  mutating func clearDirectoryListing() {_uniqueStorage()._directoryListing = nil}
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   init() {}
 
   fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+nonisolated struct Northpane_Bridge_V1_WorkspaceDirectoryListing: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var path: String = String()
+
+  var parentPath: String = String()
+
+  var rootPath: String = String()
+
+  var entries: [Northpane_Bridge_V1_ResourcePathHit] = []
+
+  var omittedEntries: UInt64 = 0
+
+  var truncated: Bool = false
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
 }
 
 nonisolated struct Northpane_Bridge_V1_ResourceFile: Sendable {
@@ -2644,7 +2690,7 @@ nonisolated extension Northpane_Bridge_V1_TerminalScrollDirection: SwiftProtobuf
 }
 
 nonisolated extension Northpane_Bridge_V1_ResourceCommandKind: SwiftProtobuf._ProtoNameProviding {
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RESOURCE_COMMAND_KIND_UNSPECIFIED\0\u{1}LIST_RESOURCES\0\u{1}REGISTER_PREVIEW\0\u{1}UPDATE_PREVIEW\0\u{1}CLOSE_PREVIEW\0\u{1}FETCH_PREVIEW_HTTP\0\u{1}PUBLISH_ARTIFACT\0\u{1}READ_ARTIFACT\0\u{1}DELETE_ARTIFACT\0\u{1}LIST_ARTIFACT_ENTRIES\0\u{1}STREAM_PREVIEW_HTTP\0\u{1}OPEN_PREVIEW_WEBSOCKET\0\u{1}SEND_PREVIEW_WEBSOCKET\0\u{1}CLOSE_PREVIEW_WEBSOCKET\0\u{1}READ_WORKSPACE_FILE\0\u{1}SEARCH_WORKSPACE_PATHS\0\u{1}LIST_SCREEN_CAPTURE_TARGETS\0\u{1}CAPTURE_SCREEN\0\u{1}STAGE_PASTED_FILE\0\u{1}LIST_HOST_DIRECTORIES\0\u{1}READ_AGENT_USAGE\0\u{1}SET_AGENT_USAGE_CONSENT\0\u{1}READ_AGENT_CONVERSATION\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RESOURCE_COMMAND_KIND_UNSPECIFIED\0\u{1}LIST_RESOURCES\0\u{1}REGISTER_PREVIEW\0\u{1}UPDATE_PREVIEW\0\u{1}CLOSE_PREVIEW\0\u{1}FETCH_PREVIEW_HTTP\0\u{1}PUBLISH_ARTIFACT\0\u{1}READ_ARTIFACT\0\u{1}DELETE_ARTIFACT\0\u{1}LIST_ARTIFACT_ENTRIES\0\u{1}STREAM_PREVIEW_HTTP\0\u{1}OPEN_PREVIEW_WEBSOCKET\0\u{1}SEND_PREVIEW_WEBSOCKET\0\u{1}CLOSE_PREVIEW_WEBSOCKET\0\u{1}READ_WORKSPACE_FILE\0\u{1}SEARCH_WORKSPACE_PATHS\0\u{1}LIST_SCREEN_CAPTURE_TARGETS\0\u{1}CAPTURE_SCREEN\0\u{1}STAGE_PASTED_FILE\0\u{1}LIST_HOST_DIRECTORIES\0\u{1}READ_AGENT_USAGE\0\u{1}SET_AGENT_USAGE_CONSENT\0\u{1}READ_AGENT_CONVERSATION\0\u{1}LIST_WORKSPACE_DIRECTORY\0\u{1}DOWNLOAD_WORKSPACE_FILE\0")
 }
 
 nonisolated extension Northpane_Bridge_V1_ResourceKind: SwiftProtobuf._ProtoNameProviding {
@@ -5112,7 +5158,7 @@ nonisolated extension Northpane_Bridge_V1_ResourceDescriptor: SwiftProtobuf.Mess
 
 nonisolated extension Northpane_Bridge_V1_ResourceResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ResourceResult"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}command_id\0\u{1}resources\0\u{3}status_code\0\u{1}headers\0\u{1}body\0\u{3}relative_path\0\u{3}media_type\0\u{1}deleted\0\u{3}total_bytes\0\u{1}files\0\u{3}stream_id\0\u{1}sequence\0\u{3}is_final\0\u{3}is_text\0\u{3}path_hits\0\u{1}truncated\0\u{3}capture_targets\0\u{3}agent_usage\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}command_id\0\u{1}resources\0\u{3}status_code\0\u{1}headers\0\u{1}body\0\u{3}relative_path\0\u{3}media_type\0\u{1}deleted\0\u{3}total_bytes\0\u{1}files\0\u{3}stream_id\0\u{1}sequence\0\u{3}is_final\0\u{3}is_text\0\u{3}path_hits\0\u{1}truncated\0\u{3}capture_targets\0\u{3}agent_usage\0\u{3}directory_listing\0")
 
   fileprivate class _StorageClass {
     var _commandID: String = String()
@@ -5133,6 +5179,7 @@ nonisolated extension Northpane_Bridge_V1_ResourceResult: SwiftProtobuf.Message,
     var _truncated: Bool = false
     var _captureTargets: [Northpane_Bridge_V1_ResourceCaptureTarget] = []
     var _agentUsage: [Northpane_Bridge_V1_AgentUsage] = []
+    var _directoryListing: Northpane_Bridge_V1_WorkspaceDirectoryListing? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -5161,6 +5208,7 @@ nonisolated extension Northpane_Bridge_V1_ResourceResult: SwiftProtobuf.Message,
       _truncated = source._truncated
       _captureTargets = source._captureTargets
       _agentUsage = source._agentUsage
+      _directoryListing = source._directoryListing
     }
   }
 
@@ -5197,6 +5245,7 @@ nonisolated extension Northpane_Bridge_V1_ResourceResult: SwiftProtobuf.Message,
         case 16: try { try decoder.decodeSingularBoolField(value: &_storage._truncated) }()
         case 17: try { try decoder.decodeRepeatedMessageField(value: &_storage._captureTargets) }()
         case 18: try { try decoder.decodeRepeatedMessageField(value: &_storage._agentUsage) }()
+        case 19: try { try decoder.decodeSingularMessageField(value: &_storage._directoryListing) }()
         default: break
         }
       }
@@ -5205,6 +5254,10 @@ nonisolated extension Northpane_Bridge_V1_ResourceResult: SwiftProtobuf.Message,
 
   func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
     try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
       if !_storage._commandID.isEmpty {
         try visitor.visitSingularStringField(value: _storage._commandID, fieldNumber: 1)
       }
@@ -5259,6 +5312,9 @@ nonisolated extension Northpane_Bridge_V1_ResourceResult: SwiftProtobuf.Message,
       if !_storage._agentUsage.isEmpty {
         try visitor.visitRepeatedMessageField(value: _storage._agentUsage, fieldNumber: 18)
       }
+      try { if let v = _storage._directoryListing {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 19)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -5286,10 +5342,66 @@ nonisolated extension Northpane_Bridge_V1_ResourceResult: SwiftProtobuf.Message,
         if _storage._truncated != rhs_storage._truncated {return false}
         if _storage._captureTargets != rhs_storage._captureTargets {return false}
         if _storage._agentUsage != rhs_storage._agentUsage {return false}
+        if _storage._directoryListing != rhs_storage._directoryListing {return false}
         return true
       }
       if !storagesAreEqual {return false}
     }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Northpane_Bridge_V1_WorkspaceDirectoryListing: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".WorkspaceDirectoryListing"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0\u{3}parent_path\0\u{3}root_path\0\u{1}entries\0\u{3}omitted_entries\0\u{1}truncated\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.path) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.parentPath) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.rootPath) }()
+      case 4: try { try decoder.decodeRepeatedMessageField(value: &self.entries) }()
+      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.omittedEntries) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.truncated) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.path.isEmpty {
+      try visitor.visitSingularStringField(value: self.path, fieldNumber: 1)
+    }
+    if !self.parentPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.parentPath, fieldNumber: 2)
+    }
+    if !self.rootPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.rootPath, fieldNumber: 3)
+    }
+    if !self.entries.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.entries, fieldNumber: 4)
+    }
+    if self.omittedEntries != 0 {
+      try visitor.visitSingularUInt64Field(value: self.omittedEntries, fieldNumber: 5)
+    }
+    if self.truncated != false {
+      try visitor.visitSingularBoolField(value: self.truncated, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Northpane_Bridge_V1_WorkspaceDirectoryListing, rhs: Northpane_Bridge_V1_WorkspaceDirectoryListing) -> Bool {
+    if lhs.path != rhs.path {return false}
+    if lhs.parentPath != rhs.parentPath {return false}
+    if lhs.rootPath != rhs.rootPath {return false}
+    if lhs.entries != rhs.entries {return false}
+    if lhs.omittedEntries != rhs.omittedEntries {return false}
+    if lhs.truncated != rhs.truncated {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
